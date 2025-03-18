@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>IP App</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      text-align: center;
+    }
+    h1 {
+      color: #333;
+    }
+    #ip-address {
+      font-size: 24px;
+      padding: 10px;
+      background-color: #f0f0f0;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Tu dirección IP</h1>
+  <div id="ip-address">Cargando...</div>
+  <script>
+    require('electron').ipcRenderer.on('ip-address', (event, ip) => {
+      document.getElementById('ip-address').innerText = ip;
+    });
+  </script>
+</body>
+</html>
+
