@@ -9,6 +9,7 @@
     "make": "electron-forge make"
   },
   "dependencies": {
+    "@electron-forge/maker-dmg": "^7.8.0",
     "electron-squirrel-startup": "^1.0.1",
     "socket.io": "^4.8.1"
   },
@@ -28,7 +29,8 @@
   "config": {
     "forge": {
       "packagerConfig": {
-        "icon": "/icon.ico"
+        "icon": "/icon.ico",
+        "appBundleId": "com.labelgrup.verentia"
       },
       "makers": [
         {
@@ -50,6 +52,12 @@
         {
           "name": "@electron-forge/maker-rpm",
           "config": {}
+        },
+        {
+          "name": "@electron-forge/maker-dmg",
+          "config": {
+            "format": "ULFO"
+          }
         }
       ]
     }
