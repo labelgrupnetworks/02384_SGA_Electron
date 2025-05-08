@@ -6,6 +6,11 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
+const log = require('electron-log');
+log.transports.file.level = 'info';
+log.info('Aplicación iniciada');
+
+
 const expressApp = express();
 expressApp.use(cors());
 const server = http.createServer(expressApp);
