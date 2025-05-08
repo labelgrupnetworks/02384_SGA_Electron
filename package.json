@@ -1,17 +1,55 @@
 {
-    "name": "electron-ip-app",
-    "version": "1.0.0",
-    "description": "Aplicación para mostrar la IP",
-    "main": "main.js",
-    "scripts": {
-        "start": "electron ."
-    },
-    "dependencies": {
-        "electron": "^35.0.2",
-        "socket.io": "^4.8.1"
-    },
-    "devDependencies": {
-        "cors": "^2.8.5",
-        "express": "^4.21.2"
+  "name": "electron-ip-app",
+  "version": "1.0.0",
+  "description": "Aplicación para mostrar la IP",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make"
+  },
+  "dependencies": {
+    "electron-squirrel-startup": "^1.0.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.8.0",
+    "@electron-forge/maker-deb": "^7.8.0",
+    "@electron-forge/maker-rpm": "^7.8.0",
+    "@electron-forge/maker-squirrel": "^7.8.0",
+    "@electron-forge/maker-zip": "^7.8.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.0",
+    "@electron-forge/plugin-fuses": "^7.8.0",
+    "@electron/fuses": "^1.8.0",
+    "cors": "^2.8.5",
+    "electron": "36.2.0",
+    "express": "^4.21.2"
+  },
+  "config": {
+    "forge": {
+      "packagerConfig": {},
+      "makers": [
+        {
+          "name": "@electron-forge/maker-squirrel",
+          "config": {
+            "name": "tu_nombre_app"
+          }
+        },
+        {
+          "name": "@electron-forge/maker-zip",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "name": "@electron-forge/maker-deb",
+          "config": {}
+        },
+        {
+          "name": "@electron-forge/maker-rpm",
+          "config": {}
+        }
+      ]
     }
+  }
 }
