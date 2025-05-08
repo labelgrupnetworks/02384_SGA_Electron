@@ -2,6 +2,7 @@
   "name": "electron-ip-app",
   "version": "1.0.0",
   "description": "Aplicación para mostrar la IP",
+  "author": "Tu Nombre <tuemail@ejemplo.com>",
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -9,9 +10,11 @@
     "make": "electron-forge make"
   },
   "dependencies": {
-    "@electron-forge/maker-dmg": "^7.8.0",
     "electron-squirrel-startup": "^1.0.1",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+        "express": "^4.21.2",
+        "cors": "^2.8.5"
+
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.0",
@@ -22,21 +25,24 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.8.0",
     "@electron-forge/plugin-fuses": "^7.8.0",
     "@electron/fuses": "^1.8.0",
-    "cors": "^2.8.5",
-    "electron": "36.2.0",
-    "express": "^4.21.2"
+
+    "electron": "36.2.0"
+
   },
   "config": {
     "forge": {
       "packagerConfig": {
         "icon": "/icon.ico",
-        "appBundleId": "com.labelgrup.verentia"
+        "appBundleId": "com.labelgrup.verentia",
+        "extraResource": [
+            "./node_modules"
+          ]
       },
       "makers": [
         {
           "name": "@electron-forge/maker-squirrel",
           "config": {
-            "name": "Verentia IP"
+            "name": "VerentiaIP"
           }
         },
         {
@@ -52,12 +58,6 @@
         {
           "name": "@electron-forge/maker-rpm",
           "config": {}
-        },
-        {
-          "name": "@electron-forge/maker-dmg",
-          "config": {
-            "format": "ULFO"
-          }
         }
       ]
     }
