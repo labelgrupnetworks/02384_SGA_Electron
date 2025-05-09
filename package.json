@@ -12,6 +12,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "electron-squirrel-startup": "^1.0.1",
+    "electron-updater": "^6.6.2",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
   },
@@ -40,7 +41,10 @@
         {
           "name": "@electron-forge/maker-squirrel",
           "config": {
-            "name": "VerentiaIP"
+            "name": "VerentiaIP",
+            "setupIcon": "./icon.ico",
+            "setupExe": "VerentiaIP.exe",
+            "noMsi": true
           }
         },
         {

@@ -12,7 +12,12 @@ module.exports = {
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      config: {},
+      "config": {
+        "name": "VerentiaIP",
+        "setupIcon": "./icon.ico",
+        "setupExe": "VerentiaIP.exe",
+        "noMsi": true
+      }
     },
     {
       name: '@electron-forge/maker-zip',

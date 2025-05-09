@@ -6,6 +6,9 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
+const { autoUpdater } = require('electron-updater');
+
+
 const expressApp = express();
 expressApp.use(cors());
 const server = http.createServer(expressApp);
@@ -19,6 +22,13 @@ const io = new Server(server, {
 
 const PORT = 3000;
 let tray = null;
+
+function setupAutoLaunch() {
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    path: app.getPath('exe')
+  });
+}
 
 function getIPAddress() {
   const interfaces = os.networkInterfaces();
@@ -104,6 +114,7 @@ function createTray() {
 app.whenReady().then(() => {
   createTray();
   setupServer();
+  setupAutoLaunch();
 });
 
 app.on('window-all-closed', (e) => {
