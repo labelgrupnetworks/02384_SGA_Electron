@@ -14,7 +14,6 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       "config": {
         "name": "VerentiaIP",
-        "setupIcon": "./icon.ico",
         "setupExe": "VerentiaIP.exe",
         "noMsi": true
       }
