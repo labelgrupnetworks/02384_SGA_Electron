@@ -12,7 +12,6 @@
   "dependencies": {
     "cors": "^2.8.5",
     "electron-squirrel-startup": "^1.0.1",
-    "electron-updater": "^6.6.2",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
   },
@@ -26,16 +25,15 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.8.0",
     "@electron-forge/plugin-fuses": "^7.8.0",
     "@electron/fuses": "^1.8.0",
-    "electron": "36.2.0"
+    "electron": "36.2.0",
+    "electron-updater": "^6.6.2"
   },
   "config": {
     "forge": {
       "packagerConfig": {
         "icon": "/icon.ico",
         "appBundleId": "com.labelgrup.verentia",
-        "extraResource": [
-          "./node_modules"
-        ]
+        "asar": true
       },
       "makers": [
         {
@@ -43,7 +41,8 @@
           "config": {
             "name": "VerentiaIP",
             "setupExe": "VerentiaIP.exe",
-            "noMsi": true
+            "noMsi": true,
+             "compressionLevel": 9
           }
         },
         {

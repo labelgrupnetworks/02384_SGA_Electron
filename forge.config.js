@@ -4,8 +4,9 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
-    extraResource: [
-      './node_modules'
+    prune: true, // Elimina módulos de desarrollo
+    ignore: [
+      /^\/(\.git|\.vscode|\.idea|docs|test|tests)($|\/)/
     ]
   },
   rebuildConfig: {},
@@ -15,7 +16,8 @@ module.exports = {
       "config": {
         "name": "VerentiaIP",
         "setupExe": "VerentiaIP.exe",
-        "noMsi": true
+        "noMsi": true,
+         compressionLevel: 9
       }
     },
     {

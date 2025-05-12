@@ -6,9 +6,6 @@ const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 
-const { autoUpdater } = require('electron-updater');
-
-
 const expressApp = express();
 expressApp.use(cors());
 const server = http.createServer(expressApp);
