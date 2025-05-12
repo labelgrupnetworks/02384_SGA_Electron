@@ -1,6 +1,6 @@
 {
   "name": "VerentiaIP",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Aplicación para mostrar la IP",
   "author": "LabelGrup Networks <web@labelgrup.com>",
   "main": "main.js",
