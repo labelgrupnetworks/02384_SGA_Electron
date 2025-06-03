@@ -189,6 +189,10 @@ function createTray() {
                 label: `IP actual: ${getIPAddress()}`,
                 enabled: false,
             },
+                  {
+            label: `Versión: ${app.getVersion()}`,
+            enabled: false,
+        },
             {
                 type: "separator",
             },
