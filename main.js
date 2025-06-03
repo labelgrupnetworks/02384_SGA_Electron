@@ -189,12 +189,18 @@ function createTray() {
                 label: `IP actual: ${getIPAddress()}`,
                 enabled: false,
             },
+                  {
+            label: `Versión: ${app.getVersion()}`,
+            enabled: false,
+        },
             {
                 type: "separator",
             },
             {
                 label: "Buscar actualizaciones",
                 click: () => {
+                    console.log("🔄 Comprobación manual de actualizaciones iniciada");
+                    updateTrayStatus("Comprobando...");
                     autoUpdater.checkForUpdatesAndNotify();
                 },
             },
@@ -211,6 +217,9 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
+    console.log(`🚀 Iniciando VerentiaIP v${app.getVersion()}`);
+    console.log(`📦 Aplicación empaquetada: ${app.isPackaged ? 'Sí' : 'No'}`);
+    
     // Primero crea la ventana de splash
     createSplashWindow();
 
