@@ -4,34 +4,55 @@ const { FuseV1Options, FuseVersion } = require('@electron/fuses');
 module.exports = {
   packagerConfig: {
     asar: true,
-    prune: true, // Elimina módulos de desarrollo
+    prune: true,
+    icon: './icon', // Forge añade automáticamente la extensión (.ico en Windows)
+    appBundleId: "com.labelgrup.verentia",
+    executableName: "VerentiaIP",
     ignore: [
-      /^\/(\.git|\.vscode|\.idea|docs|test|tests)($|\/)/
+      /^\/(\.git|\.vscode|\.idea|docs|test|tests|publish\.js)($|\/)/
     ]
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
-      "config": {
-        "name": "VerentiaIP",
-        "setupExe": "VerentiaIP.exe",
-        "noMsi": true,
-         compressionLevel: 9
+      config: {
+        name: "VerentiaIP",
+        setupExe: "VerentiaIP-Setup.exe", // Nombre más estándar
+        setupIcon: "./icon.ico",
+        noMsi: true,
+        compressionLevel: 9,
+        outputDirectory: "out",
+        // Configuración adicional para Windows
+        authors: "LabelGrup Networks",
+        description: "Aplicación para mostrar la IP"
       }
     },
     {
       name: '@electron-forge/maker-zip',
       platforms: ['darwin'],
+      config: {
+        name: "VerentiaIP-mac-x64.zip"
+      }
     },
     {
       name: '@electron-forge/maker-deb',
-      config: {},
+      config: {
+        name: "verentia-ip",
+        productName: "VerentiaIP",
+        maintainer: "LabelGrup Networks",
+        homepage: "https://github.com/labelgrupnetworks/02384_SGA_Electron"
+      }
     },
     {
       name: '@electron-forge/maker-rpm',
-      config: {},
-    },
+      config: {
+        name: "verentia-ip",
+        productName: "VerentiaIP",
+        maintainer: "LabelGrup Networks",
+        homepage: "https://github.com/labelgrupnetworks/02384_SGA_Electron"
+      }
+    }
   ],
   publishers: [
     {
@@ -41,17 +62,18 @@ module.exports = {
           owner: 'labelgrupnetworks',
           name: '02384_SGA_Electron'
         },
-        prerelease: false
+        prerelease: false,
+        draft: false,
+        // Genera automáticamente las release notes desde los commits
+        generateReleaseNotes: true
       }
     }
   ],
   plugins: [
     {
       name: '@electron-forge/plugin-auto-unpack-natives',
-      config: {},
+      config: {}
     },
-    // Fuses are used to enable/disable various Electron functionality
-    // at package time, before code signing the application
     new FusesPlugin({
       version: FuseVersion.V1,
       [FuseV1Options.RunAsNode]: false,
@@ -59,7 +81,7 @@ module.exports = {
       [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
       [FuseV1Options.EnableNodeCliInspectArguments]: false,
       [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
-      [FuseV1Options.OnlyLoadAppFromAsar]: true,
-    }),
-  ],
+      [FuseV1Options.OnlyLoadAppFromAsar]: true
+    })
+  ]
 };

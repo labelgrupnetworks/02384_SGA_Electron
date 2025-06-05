@@ -1,21 +1,26 @@
 {
   "name": "VerentiaIP",
-  "version": "1.0.1",
+  "version": "1.0.23",
   "description": "Aplicación para mostrar la IP",
   "author": "LabelGrup Networks <web@labelgrup.com>",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/labelgrupnetworks/02384_SGA_Electron.git"
+  },
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "publish": "node publish.js"
+    "publish": "dotenv -e .env -- electron-forge publish"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "electron-log": "^5.4.0",
     "electron-squirrel-startup": "^1.0.1",
-    "electron-updater": "^6.6.2",
     "express": "^4.21.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "update-electron-app": "^3.1.1"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.0",
@@ -29,69 +34,7 @@
     "@electron-forge/publisher-github": "^7.8.1",
     "@electron/fuses": "^1.8.0",
     "dotenv": "^16.5.0",
+    "dotenv-cli": "^8.0.0",
     "electron": "36.2.0"
-  },
-  "build": {
-    "appId": "com.labelgrup.verentia",
-    "productName": "VerentiaIP",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "labelgrupnetworks",
-        "repo": "02384_SGA_Electron"
-      }
-    ]
-  },
-  "config": {
-    "forge": {
-      "packagerConfig": {
-        "icon": "/icon.ico",
-        "appBundleId": "com.labelgrup.verentia",
-        "asar": true
-      },
-      "makers": [
-        {
-          "name": "@electron-forge/maker-squirrel",
-          "config": {
-            "name": "VerentiaIP",
-            "setupExe": "VerentiaIP.exe",
-            "noMsi": true,
-            "compressionLevel": 9
-          }
-        },
-        {
-          "name": "@electron-forge/maker-zip",
-          "platforms": [
-            "darwin"
-          ]
-        },
-        {
-          "name": "@electron-forge/maker-deb",
-          "config": {}
-        },
-        {
-          "name": "@electron-forge/maker-rpm",
-          "config": {}
-        },
-        {
-          "name": "@electron-forge/maker-dmg",
-          "config": {
-            "format": "ULFO"
-          }
-        }
-      ],
-      "publishers": [
-        {
-          "name": "@electron-forge/publisher-github",
-          "config": {
-            "repository": {
-              "owner": "labelgrupnetworks",
-              "name": "02384_SGA_Electron"
-            },
-            "prerelease": false
-          }
-        }
-      ]
-    }
   }
 }
