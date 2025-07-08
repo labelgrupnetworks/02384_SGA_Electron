@@ -1,6 +1,6 @@
 # 🖥️ VerentiaIP - Servidor de IP Local con Auto-actualización
 
-**VerentiaIP** es una aplicación de escritorio construida con Electron que proporciona un servidor local para obtener la dirección IP de la máquina. La aplicación incluye un sistema de tray, splash screen y auto-actualización automática desde GitHub Releases.
+**VerentiaIP** es una aplicación de escritorio construida con Electron que proporciona un servidor local para obtener la dirección IP de la máquina así como las funcionalidades de conectividad con balanzas. La aplicación incluye un sistema de tray, splash screen y auto-actualización automática desde GitHub Releases.
 
 ## 📋 Características Principales
 
@@ -160,6 +160,10 @@ Respuesta:
 {
   "ip": "192.168.1.100"
 }
+```
+
+```bash
+POST http://localhost:3000/scale-command
 ```
 
 ### WebSocket
