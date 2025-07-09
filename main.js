@@ -237,7 +237,7 @@ function setupServer() {
                         : command + "\r\n";
                     
                     // Convertir | a ETX (carácter ASCII 3) si está presente
-                    fullCommand = fullCommand.replace(/\|/g, '\x03');
+                    fullCommand = fullCommand.replace(/<ETX>/g, '\x03');
                     
                     logger.info(`➡️ [POST] Enviando: ${JSON.stringify(fullCommand)}`);
                     client.write(fullCommand, "ascii");
@@ -258,9 +258,8 @@ function setupServer() {
                     
                     // Limpiar caracteres de control de la respuesta
                     const cleanResponse = response
-                        .replace(/\x02/g, '|') // Remover STX (Start of Text)
-                        .replace(/\x03/g, '|') // Remover ETX (End of Text)
-                        .replace(/\x00/g, '|') // Remover NULL
+                        .replace(/\x02/g, '<STX>') // Remover STX (Start of Text)
+                        .replace(/\x03/g, '<ETX>') // Remover ETX (End of Text)
                         .trim();
                     
                     logger.info(`🧹 [POST] Respuesta limpia: ${cleanResponse}`);
