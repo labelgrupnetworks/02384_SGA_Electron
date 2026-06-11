@@ -293,7 +293,76 @@ function setupServer() {
                 error: err.error || err.message
             });
         }
-    });  
+    });
+
+    // Endpoint POST para enviar una trama HEX cruda por TCP (bytes exactos)
+    expressApp.post("/scale-hex", async (req, res) => {
+        logger.info(`🔄 Petición POST recibida en /scale-hex`);
+        const { ip, port, hex } = req.body;
+
+        if (!ip || !port || !hex) {
+            return res.status(400).json({
+                success: false,
+                error: "Faltan parámetros requeridos: ip, port, hex"
+            });
+        }
+
+        // "30 03 32..." o "300332..." -> Buffer de bytes exactos
+        const clean = hex.replace(/[^0-9a-fA-F]/g, "");
+        if (clean.length % 2 !== 0) {
+            return res.status(400).json({ success: false, error: "HEX con longitud impar" });
+        }
+        const payload = Buffer.from(clean, "hex");
+
+        logger.info(`⚖️ [HEX] Enviando a ${ip}:${port} → ${payload.toString("hex").match(/../g).join(" ")}`);
+
+        try {
+            const net = require("net");
+            const client = new net.Socket();
+            let response = Buffer.alloc(0);
+
+            const result = await new Promise((resolve, reject) => {
+                client.setTimeout(10000);
+
+                client.connect(port, ip, () => {
+                    logger.info(`✅ [HEX] Conectado a ${ip}:${port}`);
+                    client.write(payload); // bytes crudos, SIN encoding ni transformaciones
+                });
+
+                client.on("data", (data) => {
+                    response = Buffer.concat([response, data]);
+                    // Pequeño delay por si llegan más datos antes de cerrar
+                    setTimeout(() => client.end(), 100);
+                });
+
+                client.on("end", () => {
+                    const hexIn = response.toString("hex").match(/../g)?.join(" ") || "";
+                    logger.info(`✅ [HEX] Respuesta (${response.length} bytes): ${hexIn}`);
+                    resolve({
+                        success: true,
+                        response_hex: hexIn,
+                        response_ascii: response.toString("latin1")
+                    });
+                });
+
+                client.on("error", (err) => {
+                    logger.error(`❌ [HEX] Error TCP: ${err.message}`);
+                    reject({ success: false, error: err.message });
+                });
+
+                client.on("timeout", () => {
+                    logger.warn("⏰ [HEX] Timeout al comunicar");
+                    client.destroy();
+                    reject({ success: false, error: "Timeout de conexión" });
+                });
+            });
+
+            res.json(result);
+        } catch (err) {
+            logger.error(`❌ [HEX] Excepción: ${err.message}`);
+            res.status(500).json({ success: false, error: err.error || err.message });
+        }
+    });
 
     io.on("connection", (socket) => {
         logger.info("Cliente conectado");

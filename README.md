@@ -162,9 +162,57 @@ Respuesta:
 }
 ```
 
+#### Enviar comando a la balanza (texto)
 ```bash
 POST http://localhost:3000/scale-command
+Content-Type: application/json
 ```
+Recibe un comando como **texto** y lo envía por TCP a la balanza. El servidor:
+- Añade `\r\n` (CRLF) al final si no lo trae.
+- Sustituye los literales `<ETX>` por el byte de control `0x03`.
+
+Body:
+```json
+{
+  "ip": "10.32.230.18",
+  "port": 10051,
+  "command": "0<ETX>254<ETX>001<ETX>I!GX06"
+}
+```
+Respuesta:
+```json
+{
+  "success": true,
+  "response": "...",
+  "raw_response": "..."
+}
+```
+
+#### Enviar trama HEX cruda
+```bash
+POST http://localhost:3000/scale-hex
+Content-Type: application/json
+```
+Envía los **bytes exactos** indicados en hexadecimal, sin transformaciones ni encoding intermedio (equivalente a enviar la trama por un socket TCP crudo). Útil cuando la trama incluye bytes de control (STX, ETX, CRLF) o bytes >127. Acepta el hex con o sin espacios.
+
+Body:
+```json
+{
+  "ip": "10.32.230.18",
+  "port": 10051,
+  "hex": "30 03 32 35 34 03 30 30 31 03 49 21 47 58 30 36 0D 0A"
+}
+```
+Respuesta:
+```json
+{
+  "success": true,
+  "response_hex": "...",
+  "response_ascii": "..."
+}
+```
+
+> La trama de ejemplo termina en `0D 0A` (CRLF). Decodificada en ASCII es: `0<ETX>254<ETX>001<ETX>I!GX06<CRLF>`.
 
 ### WebSocket
 ```javascript
