@@ -20,13 +20,35 @@ test('el cero se conserva sin signo negativo', () => {
     assert.deepEqual(toGrams(0, 'kg', -3), { value: 0, unit: 'g' });
 });
 
-test('redondea a 4 decimales para no arrastrar error de coma flotante', () => {
-    // 0.1 * 1000 da 100.00000000000001 en IEEE754 si no se redondea
-    assert.deepEqual(toGrams(0.1, 'kg'), { value: 100, unit: 'g' });
+test('redondea a 4 decimales: 1.1 lb da 498.9516 no 498.9516070000001', () => {
+    // 1.1 * 453.59237 da 498.9516070000001 sin redondear. 4 decimales lo fija.
+    assert.deepEqual(toGrams(1.1, 'lb'), { value: 498.9516, unit: 'g' });
 });
 
 test('valores negativos se conservan', () => {
     assert.deepEqual(toGrams(-0.5, 'kg'), { value: -500, unit: 'g' });
+});
+
+test('valores negativos muy pequeños se normalizan a +0, no -0', () => {
+    const result = toGrams(-0.000001, 'mg');
+    assert.deepEqual(result, { value: 0, unit: 'g' });
+    // Negative control: verify -0 was NOT leaked
+    assert.equal(Object.is(result.value, -0), false);
+});
+
+test('milígramos se convierten correctamente', () => {
+    // 1234 * 10^-3 mg = 1.234 mg = 0.001234 g
+    assert.deepEqual(toGrams(1234, 'mg', -3), { value: 0.0012, unit: 'g' });
+});
+
+test('toneladas se convierten correctamente', () => {
+    // 2 t = 2000000 g
+    assert.deepEqual(toGrams(2, 't'), { value: 2000000, unit: 'g' });
+});
+
+test('onzas se convierten correctamente', () => {
+    // 2.3 oz = 65.2039 g
+    assert.deepEqual(toGrams(2.3, 'oz'), { value: 65.2039, unit: 'g' });
 });
 
 test('una unidad desconocida es error de protocolo', () => {

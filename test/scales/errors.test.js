@@ -23,8 +23,21 @@ test('cada code mapea a su estado HTTP', () => {
     assert.equal(httpStatusFor('overload'), 500);
 });
 
-test('todos los codes declarados tienen estado', () => {
+test('cada code declarado mapea exactamente a su status esperado', () => {
+    const expectedStatuses = {
+        unknown_brand: 400,
+        not_supported: 501,
+        connect: 502,
+        timeout: 504,
+        protocol: 500,
+        overload: 500,
+    };
+    // Verificar que la tabla test tiene una entrada para cada code
     for (const code of ERROR_CODES) {
-        assert.equal(typeof httpStatusFor(code), 'number', `falta estado para ${code}`);
+        assert.ok(code in expectedStatuses, `test table falta ${code}`);
+    }
+    // Verificar que httpStatusFor devuelve exactamente lo esperado
+    for (const [code, status] of Object.entries(expectedStatuses)) {
+        assert.equal(httpStatusFor(code), status, `${code} deberia ser ${status}`);
     }
 });

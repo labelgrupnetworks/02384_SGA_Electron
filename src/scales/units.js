@@ -25,8 +25,9 @@ function toGrams(rawValue, unit, exponent = 0) {
         throw new ScaleError('protocol', `unidad no convertible a gramos: ${unit}`, { unit });
     }
     const grams = Number(rawValue) * 10 ** Number(exponent) * factor;
-    // 0.1 kg da 100.00000000000001 sin redondear. 4 decimales es decima de mg.
-    return { value: Number(grams.toFixed(4)), unit: 'g' };
+    // 1.1 lb da 498.9516070000001 sin redondear. 4 decimales es decima de mg.
+    // + 0 normaliza -0 a 0.
+    return { value: Number(grams.toFixed(4)) + 0, unit: 'g' };
 }
 
 module.exports = { toGrams, KNOWN_UNITS };
