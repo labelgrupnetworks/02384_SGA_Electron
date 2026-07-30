@@ -142,3 +142,49 @@ test('un puerto cerrado da 500 y success false', async () => {
         await app.close();
     }
 });
+
+test('scale-command decodifica en ascii: el byte alto pierde el bit 7', async () => {
+    const scale = await createRawScale((chunk, socket) => socket.write(Buffer.from([0x41, 0xE9, 0x42]), 'latin1'));
+    const app = await startApp();
+    try {
+        const res = await post(app.base, '/scale-command', {
+            ip: '127.0.0.1', port: scale.port, command: 'S',
+        });
+        const body = await res.json();
+        assert.equal(body.success, true);
+        assert.equal(body.raw_response, 'AiB');
+    } finally {
+        await app.close();
+        await scale.close();
+    }
+});
+
+test('scale-hex decodifica en latin1: preserva bytes altos', async () => {
+    const scale = await createRawScale((chunk, socket) => socket.write(Buffer.from([0x41, 0xE9, 0x42])));
+    const app = await startApp();
+    try {
+        const res = await post(app.base, '/scale-hex', {
+            ip: '127.0.0.1', port: scale.port, hex: '300341',
+        });
+        const body = await res.json();
+        assert.equal(body.success, true);
+        assert.equal(body.response_ascii, 'A\xe9B');
+        assert.equal(body.response_hex, '41 e9 42');
+    } finally {
+        await app.close();
+        await scale.close();
+    }
+});
+
+test('scale-hex exige ip, port y hex', async () => {
+    const app = await startApp();
+    try {
+        const res = await post(app.base, '/scale-hex', { ip: '127.0.0.1' });
+        assert.equal(res.status, 400);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.error, 'Faltan parámetros requeridos: ip, port, hex');
+    } finally {
+        await app.close();
+    }
+});
