@@ -9,6 +9,7 @@
     "url": "https://github.com/labelgrupnetworks/02384_SGA_Electron.git"
   },
   "scripts": {
+    "test": "node --test test/**/*.test.js",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
