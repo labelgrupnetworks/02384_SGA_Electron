@@ -258,3 +258,52 @@ test('close() a media lectura resuelve enseguida y conserva lo ya recibido, sin 
         await scale.close();
     }
 });
+
+test('close() a media lectura con respuesta multilinea conserva TODAS las lineas ya recibidas', async () => {
+    // Reproduce el escenario de la revision: la primera linea llega al momento
+    // y una segunda linea llega mientras la ventana de silencio (quietMs)
+    // todavia esta abierta. En ese instante this._absorb ya ha puesto la
+    // segunda linea en this.pending, pero el tick de _readLines todavia no la
+    // ha drenado hacia su ctx.lines local (esta esperando el hueco de
+    // silencio). close() se llama justo ahi. Si close() vaciara this.pending
+    // antes de sincronizarlo con la lectura en curso, esta segunda linea se
+    // perderia en silencio -- el bug que este test reproduce.
+    //
+    // Margenes de tiempo (deliberadamente generosos: son temporizadores
+    // reales, no un reloj simulado):
+    //  - la segunda linea llega a los 150ms;
+    //  - close() se llama a los 300ms, 150ms despues de que la segunda linea
+    //    ya esta en this.pending (margen de sobra para descartar que close()
+    //    llegue "demasiado pronto" y la linea aun no haya sido absorbida);
+    //  - la ventana natural de silencio (quietMs=500 tras la segunda linea)
+    //    no venceria por si sola hasta los 150+500=650ms, muy por encima de
+    //    los 300ms del close() (margen de sobra para descartar que el test
+    //    pase "por casualidad" porque la ventana expiro sola en vez de por
+    //    la cancelacion).
+    const scale = await createRawScale((chunk, socket) => {
+        socket.write('S S 1.234 kg\r\n');
+        setTimeout(() => socket.write('S S 1.235 kg\r\n'), 150);
+    });
+    const framing = { terminator: '\r\n', encoding: 'latin1', quietMs: 500, totalMs: 3000 };
+    const link = linkTo(scale.port, framing);
+    try {
+        await link.connect();
+        const started = Date.now();
+        const pending = link.command('S');
+        await new Promise((r) => setTimeout(r, 300));
+        link.close();
+        const lines = await pending;
+        const elapsed = Date.now() - started;
+        assert.deepEqual(
+            lines,
+            ['S S 1.234 kg', 'S S 1.235 kg'],
+            'close() no deberia tirar la segunda linea, ya absorbida cuando se llamo',
+        );
+        assert.ok(
+            elapsed < 450,
+            `tardo ${elapsed}ms, deberia resolver al cerrar (~300ms) y no esperar a la ventana natural (~650ms)`,
+        );
+    } finally {
+        await scale.close();
+    }
+});

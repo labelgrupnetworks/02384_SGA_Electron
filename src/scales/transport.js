@@ -69,6 +69,20 @@ class TcpLink {
             socket.removeAllListeners();
             socket.destroy();
         }
+        // Antes de tirar el estado compartido, se sincroniza lo que hubiera en
+        // this.pending hacia cada lectura en curso (this.reads). Una linea
+        // puede haber sido absorbida del socket (this._absorb ya la puso en
+        // this.pending) sin que el tick de ninguna _readLines() la haya
+        // drenado todavia hacia su ctx.lines local; si se vaciara this.pending
+        // antes de este paso, esa linea se perderia en silencio al cancelar.
+        // Orden importa: sync primero, wipe despues. Si hay varias lecturas
+        // solapadas en curso, todas reciben la copia (ninguna se queda sin lo
+        // ya recibido solo por no ser "la que gana" en una cancelacion).
+        if (this.pending.length > 0) {
+            for (const ctx of this.reads) {
+                ctx.lines.push(...this.pending);
+            }
+        }
         this.buffer = '';
         this.pending = [];
         this.fatal = null;
