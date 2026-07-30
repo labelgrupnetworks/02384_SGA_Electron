@@ -58,7 +58,24 @@ test('createLineScale no contesta nada cuando el valor es null', async () => {
 test('chunkSize parte la respuesta sin cambiar el contenido', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg' }, { chunkSize: 3 });
     try {
-        assert.equal(await talk(scale.port, 'S\r\n', { waitMs: 400 }), 'S S 1.234 kg\r\n');
+        // Verify both: content is correct AND chunking actually happened
+        const result = await new Promise((resolve, reject) => {
+            const socket = net.createConnection(scale.port, '127.0.0.1');
+            let received = Buffer.alloc(0);
+            let chunkCount = 0;
+            socket.on('connect', () => socket.write('S\r\n', 'latin1'));
+            socket.on('data', (d) => {
+                chunkCount++;
+                received = Buffer.concat([received, d]);
+            });
+            socket.on('error', reject);
+            setTimeout(() => {
+                socket.destroy();
+                resolve({ content: received.toString('latin1'), chunkCount });
+            }, 400);
+        });
+        assert.equal(result.content, 'S S 1.234 kg\r\n');
+        assert.ok(result.chunkCount > 1, `Expected multiple chunks, got ${result.chunkCount}`);
     } finally {
         await scale.close();
     }

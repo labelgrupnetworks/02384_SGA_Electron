@@ -46,7 +46,7 @@ function writeChunked(socket, text, chunkSize) {
     pump();
 }
 
-async function createLineScale(table, { chunkSize = 0, delayMs = 0 } = {}) {
+async function createLineScale(table, { chunkSize = 0 } = {}) {
     const received = [];
     const sockets = new Set();
     const server = net.createServer((socket) => {
@@ -64,12 +64,10 @@ async function createLineScale(table, { chunkSize = 0, delayMs = 0 } = {}) {
                 received.push(line);
                 const key = line.trim().split(/\s+/)[0];
                 let reply = Object.prototype.hasOwnProperty.call(table, key) ? table[key] : 'ES';
-                if (typeof reply === 'function') reply = reply(line);
                 if (reply === null || reply === undefined) continue;
                 const lines = Array.isArray(reply) ? reply : [reply];
                 const text = lines.map((l) => `${l}\r\n`).join('');
-                if (delayMs) setTimeout(() => writeChunked(socket, text, chunkSize), delayMs);
-                else writeChunked(socket, text, chunkSize);
+                writeChunked(socket, text, chunkSize);
             }
         });
     });
