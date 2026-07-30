@@ -2012,10 +2012,14 @@ const driver = {
         // MT-SICS no da neto, tara y bruto en una trama: hacen falta dos comandos
         // y el bruto se calcula. Bizerba si lo da de golpe; /scale/weigh esconde
         // esa diferencia, que es el motivo de normalizar.
+        // Validar el peso de S ANTES de pedir TA. Si se esperan las dos respuestas
+        // y luego se validan, un S malformado seguido de un TA no soportado sale
+        // como not_supported en vez de protocol: gana el error del segundo comando
+        // y se oculta el defecto real, que estaba en el primero.
         const net = await ask(link, 'S');
-        const tare = await ask(link, 'TA');
-
         const netGrams = weightOrFail(net.tokens, 'S');
+
+        const tare = await ask(link, 'TA');
         const tareGrams = weightOrFail(tare.tokens, 'TA');
 
         return {
@@ -2071,11 +2075,16 @@ const driver = {
     },
 
     async display(link, { text } = {}) {
-        if (!text || !String(text).trim()) {
+        // Las comillas dobles delimitan el argumento y \r\n delimita la trama:
+        // ninguno de los dos puede sobrevivir dentro del texto, o el argumento
+        // se convierte en un vector para inyectar comandos MT-SICS adicionales
+        // (incluidos destructivos como RST o C2). Se limpia antes de validar,
+        // para que un texto que solo contenia esos caracteres cuente como vacio.
+        // eslint-disable-next-line no-control-regex
+        const clean = String(text ?? '').replace(/["\x00-\x1F\x7F]/g, '');
+        if (!clean.trim()) {
             throw new ScaleError('protocol', 'text es obligatorio para display');
         }
-        // Las comillas dobles delimitan el argumento, asi que dentro no pueden ir.
-        const clean = String(text).replace(/"/g, '');
         const { lines } = await ask(link, `D "${clean}"`);
         return { data: {}, raw: lines };
     },
