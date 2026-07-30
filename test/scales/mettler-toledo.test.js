@@ -216,3 +216,108 @@ test('selectPlatform en un equipo de una sola plataforma da not_supported', asyn
         },
     );
 });
+
+test('guidedWeigh declara la capacidad como garantizada', () => {
+    assert.ok(driver.capabilities.includes('guidedWeigh'));
+});
+
+test('guidedWeigh hace la secuencia completa D, DS, S, TA, DW', async () => {
+    const result = await withScale({
+        D: 'D A', DS: 'DS A', S: 'S S 2.500 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        const res = await driver.guidedWeigh(link, { text: 'PESAR BIDON 3', beep: true });
+        assert.deepEqual(scale.received, ['D "PESAR BIDON 3"', 'DS', 'S', 'TA', 'DW']);
+        return res;
+    });
+    assert.deepEqual(result.data.net, { value: 2500, unit: 'g' });
+    assert.equal(result.data.stable, true);
+    assert.equal(result.data.displayRestored, true);
+});
+
+test('guidedWeigh sin texto no envia D', async () => {
+    await withScale({
+        S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        await driver.guidedWeigh(link, {});
+        assert.deepEqual(scale.received, ['S', 'TA', 'DW']);
+    });
+});
+
+test('guidedWeigh sin beep no envia DS', async () => {
+    await withScale({
+        D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        await driver.guidedWeigh(link, { text: 'HOLA', beep: false });
+        assert.deepEqual(scale.received, ['D "HOLA"', 'S', 'TA', 'DW']);
+    });
+});
+
+test('guidedWeigh sigue adelante si el equipo no tiene zumbador', async () => {
+    // DS no esta en la tabla, asi que la bascula falsa contesta ES.
+    const result = await withScale({
+        D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        const res = await driver.guidedWeigh(link, { text: 'HOLA', beep: true });
+        assert.deepEqual(scale.received, ['D "HOLA"', 'DS', 'S', 'TA', 'DW']);
+        return res;
+    });
+    // Un pitido que no suena no es razon para no dar la pesada.
+    assert.deepEqual(result.data.net, { value: 1000, unit: 'g' });
+    assert.ok(result.raw.some((line) => line === 'ES'), 'el ES deberia quedar en raw');
+});
+
+test('guidedWeigh usa SI cuando waitStable es false', async () => {
+    await withScale({
+        SI: 'SI D 0.900 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        const res = await driver.guidedWeigh(link, { waitStable: false });
+        assert.deepEqual(scale.received, ['SI', 'TA', 'DW']);
+        assert.equal(res.data.stable, false);
+    });
+});
+
+test('guidedWeigh restaura el display aunque la pesada falle', async () => {
+    const scale = await createLineScale({ D: 'D A', S: 'S +', DW: 'DW A' });
+    const link = new TcpLink({
+        host: '127.0.0.1',
+        port: scale.port,
+        framing: { ...driver.framing, quietMs: 80, totalMs: 1200 },
+    });
+    try {
+        await link.connect();
+        await assert.rejects(
+            () => driver.guidedWeigh(link, { text: 'PESAR' }),
+            (err) => {
+                assert.equal(err.code, 'overload');
+                return true;
+            },
+        );
+        // Esto es lo importante: el display no se queda con el texto puesto.
+        assert.ok(scale.received.includes('DW'), 'deberia haber enviado DW pese al fallo');
+    } finally {
+        link.close();
+        await scale.close();
+    }
+});
+
+test('guidedWeigh no enmascara el error original si tambien falla el DW', async () => {
+    const scale = await createLineScale({ D: 'D A', S: 'S +' });  // DW contesta ES
+    const link = new TcpLink({
+        host: '127.0.0.1',
+        port: scale.port,
+        framing: { ...driver.framing, quietMs: 80, totalMs: 1200 },
+    });
+    try {
+        await link.connect();
+        await assert.rejects(
+            () => driver.guidedWeigh(link, { text: 'PESAR' }),
+            (err) => {
+                assert.equal(err.code, 'overload', 'debe ganar el error de la pesada');
+                return true;
+            },
+        );
+    } finally {
+        link.close();
+        await scale.close();
+    }
+});
