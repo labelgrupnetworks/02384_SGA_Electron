@@ -139,6 +139,31 @@ test('display rechaza un texto vacio antes de tocar la red', async () => {
     );
 });
 
+test('display no permite inyectar un comando adicional via \\r\\n', async () => {
+    await withScale({ D: 'D A' }, async (link, scale) => {
+        await driver.display(link, { text: 'HOLA"\r\nDS "X' });
+        assert.equal(scale.received.length, 1);
+        assert.ok(!scale.received.some((line) => line.trim().split(/\s+/)[0] === 'DS'));
+    });
+});
+
+test('display no deja pasar un comando destructivo inyectado como RST', async () => {
+    await withScale({ D: 'D A' }, async (link, scale) => {
+        await driver.display(link, { text: 'X"\r\nRST\r\nD "Y' });
+        assert.ok(!scale.received.some((line) => line.trim().split(/\s+/)[0] === 'RST'));
+    });
+});
+
+test('display rechaza un texto que solo tiene comillas, tras limpiarlas queda vacio', async () => {
+    await assert.rejects(
+        () => withScale({ D: 'D A' }, (link) => driver.display(link, { text: '"""' })),
+        (err) => {
+            assert.equal(err.code, 'protocol');
+            return true;
+        },
+    );
+});
+
 test('displayClear envia DW', async () => {
     await withScale({ DW: 'DW A' }, async (link, scale) => {
         await driver.displayClear(link);
