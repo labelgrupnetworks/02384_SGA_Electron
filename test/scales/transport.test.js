@@ -192,3 +192,69 @@ test('acepta \\r como terminador para modelos que lo usan', async () => {
         await scale.close();
     }
 });
+
+test('dos comandos simultaneos sobre el mismo link: exactamente uno se lleva la linea, el otro se queda vacio', async () => {
+    // La bascula solo contesta al primer envio que le llega; cualquier envio
+    // posterior no recibe respuesta. Decision de diseno (a falta de otra senal
+    // para desempatar): cuando dos _readLines() solapados compiten por la misma
+    // linea, exactamente una de las dos llamadas debe quedarsela intacta y la
+    // otra debe resolver [] -- igual que "la bascula no contesto a esta". Lo que
+    // NUNCA debe pasar es que ambas la vean (duplicado) o que ninguna la vea
+    // (perdida) o que llegue partida entre las dos.
+    let replied = false;
+    const scale = await createRawScale((chunk, socket) => {
+        if (!replied) {
+            replied = true;
+            socket.write('S S 1.234 kg\r\n');
+        }
+    });
+    const link = linkTo(scale.port, { ...FRAMING, quietMs: 30, totalMs: 200 });
+    try {
+        await link.connect();
+        const [a, b] = await Promise.all([link.command('S'), link.command('S')]);
+        const results = [a, b];
+        const withLine = results.filter((r) => r.length > 0);
+        const empty = results.filter((r) => r.length === 0);
+        assert.equal(withLine.length, 1, 'exactamente una de las dos llamadas debe llevarse la linea');
+        assert.deepEqual(withLine[0], ['S S 1.234 kg']);
+        assert.equal(empty.length, 1, 'la otra debe quedarse vacia, no con una mezcla ni un duplicado');
+        assert.deepEqual(empty[0], []);
+    } finally {
+        link.close();
+        await scale.close();
+    }
+});
+
+test('close() a media lectura resuelve enseguida y conserva lo ya recibido, sin unhandledRejection', async () => {
+    // La bascula contesta una vez y luego calla. Se llama a close() mientras el
+    // comando todavia esta en su hueco de silencio (quietMs=300, muy por debajo
+    // de totalMs=3000). Debe resolver ya, con la linea que ya habia llegado
+    // (close() cancela la lectura, no la descarta), y sin dejar escapar ningun
+    // unhandledRejection (una cancelacion nunca debe rechazar).
+    const scale = await createRawScale((chunk, socket) => {
+        socket.write('S S 1.234 kg\r\n');
+    });
+    const framing = { terminator: '\r\n', encoding: 'latin1', quietMs: 300, totalMs: 3000 };
+    const link = linkTo(scale.port, framing);
+
+    let unhandled = null;
+    const onUnhandled = (err) => { unhandled = err; };
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+        await link.connect();
+        const started = Date.now();
+        const pending = link.command('S');
+        await new Promise((r) => setTimeout(r, 40)); // deja que la linea llegue y se acumule
+        link.close();
+        const lines = await pending;
+        const elapsed = Date.now() - started;
+        assert.deepEqual(lines, ['S S 1.234 kg'], 'close() no deberia tirar lo ya recibido');
+        assert.ok(elapsed < 200, `tardo ${elapsed}ms, deberia resolver al cerrar (no agotar totalMs=3000 ni quietMs=300)`);
+        await new Promise((r) => setTimeout(r, 20)); // deja aflorar un unhandledRejection tardio si lo hubiera
+        assert.equal(unhandled, null, 'una lectura cancelada por close() no deberia rechazar nunca');
+    } finally {
+        process.off('unhandledRejection', onUnhandled);
+        await scale.close();
+    }
+});
