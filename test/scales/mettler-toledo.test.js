@@ -321,3 +321,20 @@ test('guidedWeigh no enmascara el error original si tambien falla el DW', async 
         await scale.close();
     }
 });
+
+test('guidedWeigh da la pesada aunque el DW final falle: no lanza, y displayRestored es false', async () => {
+    // DW no esta en la tabla, asi que la bascula falsa contesta ES: la pesada
+    // en si sale bien, pero restaurar el display falla despues.
+    const result = await withScale({
+        D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg',
+    }, async (link, scale) => {
+        const res = await driver.guidedWeigh(link, { text: 'PESAR' });
+        assert.deepEqual(scale.received, ['D "PESAR"', 'S', 'TA', 'DW']);
+        return res;
+    });
+    // Un DW que falla no debe tirar el peso: el operario ya se ha pesado.
+    assert.deepEqual(result.data.net, { value: 1000, unit: 'g' });
+    assert.equal(result.data.displayRestored, false);
+    // El ES del DW fallido deberia quedar en raw, igual que el del pitido.
+    assert.ok(result.raw.some((line) => line === 'ES'), 'el ES del DW fallido deberia quedar en raw');
+});

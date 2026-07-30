@@ -108,9 +108,12 @@ const driver = {
             const cleared = await this.displayClear(link);
             raw.push(...cleared.raw);
             displayRestored = true;
-        } catch {
+        } catch (err) {
             // Se ignora a proposito: si el DW falla, el error que importa es el de
-            // la pesada, y relanzar aqui lo enmascararia.
+            // la pesada, y relanzar aqui lo enmascararia. Pero la respuesta (si la
+            // hubo) queda en raw, igual que con el pitido, para que no desaparezca
+            // sin dejar rastro de que se intento.
+            if (err.detail?.response) raw.push(err.detail.response);
         }
 
         if (failure) throw failure;
