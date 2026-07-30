@@ -33,8 +33,14 @@ test('parseWeight ignora una respuesta cuya ultima palabra no es unidad', () => 
     assert.equal(parseWeight(['TIM', 'A', '14', '09', '50']), null);
 });
 
-test('parseWeight ignora una respuesta demasiado corta', () => {
+test('parseWeight ignora una respuesta cuya ultima palabra no es unidad (aunque sea corta)', () => {
     assert.equal(parseWeight(['Z', 'A']), null);
+});
+
+test('parseWeight exige al menos 4 tokens, aunque los ultimos dos pasen validacion', () => {
+    // Sin este filtro, parseWeight(['1.234', 'kg']) pasaria como peso,
+    // cuando una respuesta bien formada MT-SICS es <comando> <estado> <valor> <unidad>.
+    assert.equal(parseWeight(['1.234', 'kg']), null);
 });
 
 test('parseWeight ignora un valor no numerico aunque la unidad sea buena', () => {
