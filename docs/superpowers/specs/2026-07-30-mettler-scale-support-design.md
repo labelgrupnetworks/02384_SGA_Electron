@@ -59,7 +59,8 @@ Bizerba física disponible para pruebas.**
 | Pesada guiada | Operaciones atómicas **y** una compuesta |
 | Extensibilidad | Registro de drivers, para que añadir marca/modelo no toque endpoints |
 | Paridad Bizerba | Las cinco operaciones existentes; lo que la Bizerba no sabe responde 501 |
-| Variación por modelo | `model` opcional con tabla de overrides sobre la línea base de la familia |
+| Variación por modelo | `model` opcional, select cerrado por marca, overrides sobre la línea base |
+| Marca por defecto | Formulario preselecciona `mettler_toledo`; migración deja lo existente en `bizerba` |
 | Capacidades por equipo | `ES` → `not_supported` en tiempo de ejecución, sin configuración |
 | Direccionamiento Bizerba | Configurable vía `options`, con los valores actuales por defecto |
 
@@ -147,9 +148,11 @@ const MODELS = {
 comporta como la base no necesita entrada: solo se dan de alta los que se salen. Así no hay
 explosión combinatoria marca×modelo, y añadir un equipo raro es un objeto de dos líneas.
 
-Un `model` desconocido **no es un error**: se registra un aviso y se usa la línea base. Fallar
-ahí convertiría un dato de configuración mal escrito en una báscula inutilizable, cuando lo más
-probable es que la base funcione.
+Un `model` sin entrada en `MODELS` **no es un error**: se usa la línea base. Es el caso normal,
+no la excepción, porque el catálogo de modelos del SGA es más amplio que la tabla de overrides
+—solo se da de alta un override cuando un equipo se desvía— y porque el `model` que el SGA
+guarda vale también como documentación de qué hay instalado. Se registra en `log` a nivel debug,
+no como aviso, para no llenar el log de ruido en el caso corriente.
 
 ### Opciones de protocolo por instalación
 
@@ -289,12 +292,10 @@ congelado sin saber por qué.
 
 ### Marca, modelo y opciones en base de datos
 
-Una sola migración añade tres columnas a `scales`:
+La migración añade tres columnas a `scales`:
 
-- `brand` string, con `default('bizerba')` para que las filas existentes sigan funcionando sin
-  intervención.
-- `model` string **nullable**. Nulo significa "línea base de la familia", que es lo correcto
-  para la gran mayoría de equipos.
+- `brand` string, **sin default en base de datos**.
+- `model` string **nullable**. Nulo significa "línea base de la familia".
 - `protocol_options` JSON **nullable**. Es el canal para `options`: hoy el prefijo de
   direccionamiento Bizerba, mañana lo que aparezca. Se elige JSON en vez de una columna por
   campo precisamente porque no sabemos qué campos harán falta, y porque una columna nueva por
@@ -302,21 +303,73 @@ Una sola migración añade tres columnas a `scales`:
 
 En `Scale`: las tres a `$fillable`, y `protocol_options` con cast `array`.
 
+**La marca por defecto no es Bizerba.** Lo nuevo que se instale será Mettler, así que el
+formulario preselecciona `mettler_toledo`. Pero todo lo que existe hoy **es** Bizerba, porque es
+lo único que el sistema sabía hablar. Son dos cosas distintas y la migración las separa en tres
+pasos, que es la única forma de que ni las filas viejas ni las nuevas se lleven un valor
+equivocado:
+
+```php
+// 1. Columna nullable: las filas existentes entran a NULL, sin default que las contamine.
+Schema::table('scales', fn (Blueprint $t) => $t->string('brand')->nullable()->after('name'));
+
+// 2. Backfill explícito: todo lo que existía es Bizerba.
+DB::table('scales')->whereNull('brand')->update(['brand' => 'bizerba']);
+
+// 3. Ya sin nulos, se cierra la columna. Sin default: lo pone el formulario, no la base.
+Schema::table('scales', fn (Blueprint $t) => $t->string('brand')->nullable(false)->change());
+```
+
+Laravel 12 soporta `->change()` de forma nativa, sin doctrine/dbal.
+
+El `down()` elimina las tres columnas. Es destructivo por naturaleza —se pierde la marca
+configurada— y así queda dicho en el propio fichero.
+
+Nota sobre el paso 3: dejo la columna **sin default de base de datos** a propósito, en vez de
+poner `default('mettler_toledo')`. Un default en BD es invisible desde el código y convierte un
+`brand` que falta por un bug en una fila que parece correcta. Sin él, ese insert falla y se ve.
+El valor por defecto que percibe el usuario lo pone el `selected` del formulario, que es donde
+se puede leer.
+
 **Renombrado necesario:** `Scale::SCALE_MODEL_OPTIONS` contiene marcas (`bizerba`,
 `mettler_toledo`), no modelos. Con `model` existiendo de verdad, ese nombre pasa de impreciso a
 activamente engañoso, así que se renombra a `SCALE_BRAND_OPTIONS`. Hay que actualizar sus usos;
 hoy la constante está declarada y sin usar, así que el cambio es de bajo riesgo, pero conviene
 hacerlo en el mismo commit que introduce `model` para que no queden los dos nombres a la vez.
 
-Formularios de alta y edición: `brand` como select desde `SCALE_BRAND_OPTIONS`; `model` como
-campo de texto libre y opcional, con ayuda que explique que en blanco es lo normal y que solo
-se rellena para equipos que se sepa que se desvían. Un select cerrado de modelos sería peor:
-obligaría a tocar código cada vez que llegue un equipo nuevo, que es justo lo que el diseño
-de overrides evita.
+El renombrado deja libre el nombre `SCALE_MODEL_OPTIONS`, que ahora se usa para lo que dice ser:
+el catálogo cerrado de modelos, agrupado por marca.
+
+```php
+public const SCALE_BRAND_OPTIONS = [
+    'mettler_toledo' => 'Mettler Toledo',
+    'bizerba'        => 'Bizerba',
+];
+
+public const SCALE_MODEL_OPTIONS = [
+    'mettler_toledo' => ['ics425' => 'ICS425', 'ics4xx' => 'ICS4xx (genérico)'],
+    'bizerba'        => ['is30' => 'IS30'],
+];
+```
+
+Formularios de alta y edición: `brand` como select desde `SCALE_BRAND_OPTIONS`, con
+`mettler_toledo` preseleccionado. `model` como **segundo select dependiente**, filtrado por la
+marca elegida y con opción vacía "genérico / línea base" que sigue siendo válida. El filtrado
+es en cliente sobre las dos constantes serializadas a la vista; no hace falta petición extra.
 
 Validación en `StoreRequest` y `UpdateRequest`: `brand` con `in:` sobre las claves de
-`SCALE_BRAND_OPTIONS`; `model` `nullable|string|max:50`. `StoreUseCase` y `UpdateUseCase`
-reciben los parámetros nuevos.
+`SCALE_BRAND_OPTIONS`; `model` `nullable` y validado **contra la marca**, con una regla que
+compruebe `model ∈ SCALE_MODEL_OPTIONS[brand]`. Es lo que impide guardar un `is30` con marca
+Mettler, que un `in:` plano sobre todos los modelos dejaría pasar. `StoreUseCase` y
+`UpdateUseCase` reciben los parámetros nuevos.
+
+**Dos catálogos, y es correcto que no coincidan.** El del SGA es el de equipos que se pueden
+instalar, y sirve para validar y documentar. El de overrides de VerentiaIP solo lista los que se
+desvían del protocolo base. Un modelo del catálogo del SGA sin entrada de override es el caso
+**normal**, no un error: significa que ese equipo se comporta como la línea base. Lo que hay que
+vigilar es la relación inversa —un override en VerentiaIP para un modelo que el SGA no ofrece en
+el select, porque entonces nadie puede activarlo—, y `GET /scale/brands` devuelve los modelos con
+override precisamente para poder verlo.
 
 ### Detección de versión de VerentiaIP
 
@@ -420,6 +473,10 @@ SGA, con PHPUnit y `Http::fake()`:
 - Una Bizerba con `model` o `protocol_options` no nulos y VerentiaIP antiguo produce error
   explícito, por el mismo motivo.
 - Un 501 del escritorio llega al cliente como 501 y no como error genérico.
+- La migración deja en `bizerba` las básculas que existían antes de ella, y el `down()` revierte
+  las tres columnas.
+- La validación cruzada rechaza `brand=mettler_toledo` con `model=is30`, y acepta `model` vacío
+  con cualquier marca.
 
 Verificación manual contra la ICS425-BW de `192.168.0.86:4305`: `/scale/info`, `/scale/weigh`,
 `/scale/tare`, `/scale/zero`, `/scale/display`, `/scale/beep` y `/scale/guided-weigh`.
@@ -459,8 +516,11 @@ Cada paso es utilizable por sí solo.
 3. **VerentiaIP, driver Bizerba.** Cinco operaciones reales, cuatro en 501, prefijo de
    direccionamiento desde `options` con los valores actuales por defecto. Verificación: tramas
    grabadas.
-4. **SGA, migración.** Columnas `brand`, `model` y `protocol_options`; renombrado de
-   `SCALE_MODEL_OPTIONS` a `SCALE_BRAND_OPTIONS`; formularios, validación, casos de uso.
+4. **SGA, migración.** Columnas `brand`, `model` y `protocol_options` con el backfill de tres
+   pasos; renombrado de `SCALE_MODEL_OPTIONS` a `SCALE_BRAND_OPTIONS` y nuevo
+   `SCALE_MODEL_OPTIONS` agrupado por marca; los dos selects dependientes, validación cruzada
+   marca/modelo, casos de uso. Verificación: las básculas existentes quedan en `bizerba` y una
+   nueva se crea preseleccionando `mettler_toledo`.
 5. **SGA, `ScaleGateway`.** Las dos ramas, los seis métodos del controlador, propagación del
    501, y la limpieza de los placeholders `mettler_toledo`.
 6. **SGA, navegador.** `validateScaleSetup()` con `api`, `model` y `options`, y el branch en
