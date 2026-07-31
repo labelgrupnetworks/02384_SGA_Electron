@@ -2689,10 +2689,12 @@ const driver = {
     // hace que respondan 501 sin abrir socket.
     deviceDependent: [],
 
-    models: {
-        // El comentario de main.js:234 avisa de que las IS30 usan \r a secas.
-        is30: { framing: { terminator: '\r' } },
-    },
+    // Sin overrides de modelo. El main.js original (037efa7:234) anotaba que las
+    // IS30 "suelen usar terminacion \r o \r\n", pero es un comentario dubitativo y
+    // \r\n es el valor que funciona hoy en produccion por la ruta heredada. Forzar
+    // \r para is30 dejaria muda una bascula que funciona. Un modelo sin override usa
+    // la linea base, que es justo lo correcto mientras no haya evidencia mejor.
+    models: {},
 
     async weigh(link, { options } = {}) {
         const lines = await ask(link, TELEGRAMS.weigh, options);
@@ -2848,7 +2850,10 @@ test('GET /scale/brands devuelve el catalogo con capacidades y modelos', async (
         const bizerba = body.brands.find((b) => b.id === 'bizerba');
         assert.equal(bizerba.defaultPort, 10051);
         assert.ok(!bizerba.capabilities.includes('zero'));
-        assert.deepEqual(bizerba.models, ['is30']);
+        // Ningun driver declara overrides de modelo hoy: el catalogo de modelos del
+        // SGA es a proposito mas amplio que esta tabla, que solo lista lo que se
+        // desvia del protocolo base.
+        assert.deepEqual(bizerba.models, []);
     } finally {
         await app.close();
     }
@@ -2999,16 +3004,18 @@ test('select-platform pasa el numero al driver', async () => {
     }
 });
 
-test('el model llega a la respuesta y elige el override de framing', async () => {
-    // is30 usa \r a secas. La bascula falsa enmarca con \r\n, asi que con el
-    // override no se entiende: eso demuestra que el override se aplico.
+test('el model se propaga a la respuesta y no rompe la operacion', async () => {
+    // Ningun driver declara overrides de modelo hoy (ver el comentario de models
+    // en bizerba.js), asi que un model cualquiera debe caer a la linea base y
+    // funcionar igual. Lo que se comprueba aqui es que el model viaja de vuelta,
+    // que es lo que el SGA necesita para saber con que configuracion se hablo.
     const scale = await createLineScale({ [`0\x03254\x03001\x03I!GX05`]: 'OK' });
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale/tare', {
             ip: '127.0.0.1', port: scale.port, brand: 'bizerba', model: 'is30',
         });
-        assert.equal(res.status, 504, 'con terminador \\r la bascula \\r\\n no contesta');
+        assert.equal(res.status, 200);
         assert.equal((await res.json()).model, 'is30');
     } finally {
         await app.close();
