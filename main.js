@@ -6,6 +6,7 @@ const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const { registerLegacyRoutes } = require("./src/server/legacy-routes");
+const { registerScaleRoutes } = require("./src/server/scale-routes");
 
 // Migración a update-electron-app
 const { updateElectronApp, UpdateSourceType } = require("update-electron-app");
@@ -205,6 +206,7 @@ function setupServer() {
     });
 
     registerLegacyRoutes(expressApp, logger);
+    registerScaleRoutes(expressApp, logger, { version: app.getVersion() });
 
     io.on("connection", (socket) => {
         logger.info("Cliente conectado");
