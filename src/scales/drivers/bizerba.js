@@ -36,7 +36,29 @@ const FIELD_MAP = Object.freeze({ GD01: 'net', GD02: 'tare', GD07: 'gross' });
 // eslint-disable-next-line no-control-regex
 const INVALID_ADDRESS_CHARS = /[\x00-\x1F\x7F]/;
 
-function assertAddressElement(raw, index) {
+/**
+ * Convierte un elemento de addressPrefix al string que de verdad se va a
+ * enviar, y lo valida sobre ESE string. Antes se validaba `String(raw)` pero
+ * se serializaba con `prefix.join(ETX)`, y esas dos conversiones no coinciden:
+ * `String(null)` da `'null'` (no vacio, sin caracteres de control: pasaba la
+ * validacion) pero `[..., null, ...].join(ETX)` renderiza ese hueco como
+ * cadena vacia (colapsa el campo igual que si hubiera sido `''` a mano). Un
+ * agujero de array disperso (`['0', , '001']`) es peor todavia: `forEach` ni
+ * siquiera llama al callback para el hueco, asi que la validacion se saltaba
+ * por completo. La correccion es estructural: normalizar una sola vez por
+ * indice (con acceso directo `prefix[i]`, que si devuelve `undefined` para un
+ * hueco), validar el resultado, y construir la trama uniendo ESE array
+ * normalizado — nunca el array original del llamador.
+ *
+ * `null` y `undefined` (explicitos o por hueco) se rechazan en vez de
+ * normalizarse a texto: un campo que el llamador no proporciono es un error
+ * de configuracion, y tanto mandar el texto literal `"null"` como colapsar el
+ * campo en silencio son peores que un mensaje claro.
+ */
+function normalizeAddressElement(raw, index) {
+    if (raw === null || raw === undefined) {
+        throw new ScaleError('protocol', `addressPrefix[${index}] no puede ser null ni undefined`, { addressPrefix: raw, index });
+    }
     const value = String(raw);
     if (value.length === 0) {
         throw new ScaleError('protocol', `addressPrefix[${index}] esta vacio`, { addressPrefix: raw, index });
@@ -44,6 +66,7 @@ function assertAddressElement(raw, index) {
     if (INVALID_ADDRESS_CHARS.test(value)) {
         throw new ScaleError('protocol', `addressPrefix[${index}] contiene un caracter de control no permitido: ${JSON.stringify(value)}`, { addressPrefix: raw, index });
     }
+    return value;
 }
 
 function buildTelegram(body, options = {}) {
@@ -51,8 +74,10 @@ function buildTelegram(body, options = {}) {
     if (!Array.isArray(prefix) || prefix.length !== 3) {
         throw new ScaleError('protocol', 'addressPrefix debe tener exactamente tres campos', { addressPrefix: prefix });
     }
-    prefix.forEach(assertAddressElement);
-    return `${prefix.join(ETX)}${ETX}${body}`;
+    // Acceso directo por indice (no forEach/map sobre el array del llamador):
+    // asi un hueco disperso lee como undefined y no se salta la validacion.
+    const normalized = [0, 1, 2].map((index) => normalizeAddressElement(prefix[index], index));
+    return `${normalized.join(ETX)}${ETX}${body}`;
 }
 
 async function ask(link, body, options) {

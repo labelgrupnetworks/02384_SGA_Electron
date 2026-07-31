@@ -109,6 +109,37 @@ test('buildTelegram rechaza un campo vacio en addressPrefix', () => {
     });
 });
 
+test('buildTelegram rechaza null en un campo de addressPrefix, no lo manda como texto "null"', () => {
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', null, '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram rechaza undefined en un campo de addressPrefix', () => {
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', undefined, '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram rechaza un hueco disperso: no se salta la validacion', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const prefix = ['0', , '001'];
+    assert.equal(prefix.length, 3);
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: prefix }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram acepta numeros en addressPrefix y los serializa como su forma texto', () => {
+    assert.equal(
+        buildTelegram('I!GX05', { addressPrefix: [0, 254, 1] }),
+        `0${ETX}254${ETX}1${ETX}I!GX05`,
+    );
+});
+
 test('weigh envia la trama de pesos y devuelve neto, tara y bruto en gramos', async () => {
     const body = 'I?LV01|RX02|STA7|GD01;GD02;GD07|LX02';
     const result = await withScale({
