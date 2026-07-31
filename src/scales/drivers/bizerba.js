@@ -21,11 +21,37 @@ const TELEGRAMS = Object.freeze({
 // Campo de la respuesta -> clave de peso.
 const FIELD_MAP = Object.freeze({ GD01: 'net', GD02: 'tare', GD07: 'gross' });
 
+// Un campo de addressPrefix acaba dentro de la trama entre dos ETX (o entre el
+// ultimo ETX y el \r\n final que anade TcpLink). Si contuviera el propio ETX o
+// un CR/LF podria cerrar el campo antes de tiempo o cerrar la trama entera y
+// abrir una segunda: quien controle addressPrefix podria colar un comando
+// distinto en el mismo envio. Se rechaza tambien cualquier otro caracter de
+// control (0x00-0x1F, 0x7F): un direccionamiento no tiene motivo para llevar
+// caracteres no imprimibles, y aceptarlos "por si acaso" es la misma clase de
+// descuido. Un campo vacio se rechaza igual: colapsaria dos delimitadores en
+// uno y desplazaria que campo es cual. Se rechaza en vez de sanear (a
+// diferencia del texto de pantalla del driver Mettler) porque una direccion
+// corregida en silencio no es una direccion: hablaria con la bascula
+// equivocada, o con ninguna, sin que quien lo configuro se entere.
+// eslint-disable-next-line no-control-regex
+const INVALID_ADDRESS_CHARS = /[\x00-\x1F\x7F]/;
+
+function assertAddressElement(raw, index) {
+    const value = String(raw);
+    if (value.length === 0) {
+        throw new ScaleError('protocol', `addressPrefix[${index}] esta vacio`, { addressPrefix: raw, index });
+    }
+    if (INVALID_ADDRESS_CHARS.test(value)) {
+        throw new ScaleError('protocol', `addressPrefix[${index}] contiene un caracter de control no permitido: ${JSON.stringify(value)}`, { addressPrefix: raw, index });
+    }
+}
+
 function buildTelegram(body, options = {}) {
     const prefix = options.addressPrefix || DEFAULT_ADDRESS_PREFIX;
     if (!Array.isArray(prefix) || prefix.length !== 3) {
         throw new ScaleError('protocol', 'addressPrefix debe tener exactamente tres campos', { addressPrefix: prefix });
     }
+    prefix.forEach(assertAddressElement);
     return `${prefix.join(ETX)}${ETX}${body}`;
 }
 

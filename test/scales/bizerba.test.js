@@ -53,6 +53,62 @@ test('buildTelegram rechaza un prefijo que no tiene tres campos', () => {
     });
 });
 
+test('buildTelegram sigue produciendo el prefijo por defecto byte a byte', () => {
+    assert.equal(buildTelegram('I!GX05'), `0${ETX}254${ETX}001${ETX}I!GX05`);
+});
+
+test('buildTelegram sigue aceptando un prefijo legitimo distinto', () => {
+    assert.equal(
+        buildTelegram('I!GX05', { addressPrefix: ['1', '200', '002'] }),
+        `1${ETX}200${ETX}002${ETX}I!GX05`,
+    );
+});
+
+for (const [label, badChar] of [['ETX', ETX], ['CR', '\r'], ['LF', '\n']]) {
+    test(`buildTelegram rechaza ${label} dentro de un campo de addressPrefix`, () => {
+        for (let i = 0; i < 3; i += 1) {
+            const prefix = ['0', '254', '001'];
+            prefix[i] = `x${badChar}y`;
+            assert.throws(() => buildTelegram('I!GX05', { addressPrefix: prefix }), (err) => {
+                assert.equal(err.code, 'protocol');
+                return true;
+            }, `campo ${i} con ${label} deberia rechazarse`);
+        }
+    });
+}
+
+test('buildTelegram rechaza la carga util de inyeccion del reviewer sin producir dos tramas', () => {
+    assert.throws(
+        () => buildTelegram('I!GX05', { addressPrefix: ['001\r\n9\x03100\x03007', '254', '001'] }),
+        (err) => {
+            assert.equal(err.code, 'protocol');
+            return true;
+        },
+    );
+});
+
+test('buildTelegram rechaza otros caracteres de control (no solo ETX/CR/LF)', () => {
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['\x00', '254', '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', '\x1F', '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', '254', '\x7F'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram rechaza un campo vacio en addressPrefix', () => {
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['', '254', '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
 test('weigh envia la trama de pesos y devuelve neto, tara y bruto en gramos', async () => {
     const body = 'I?LV01|RX02|STA7|GD01;GD02;GD07|LX02';
     const result = await withScale({
