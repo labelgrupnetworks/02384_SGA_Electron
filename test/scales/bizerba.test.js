@@ -133,11 +133,29 @@ test('buildTelegram rechaza un hueco disperso: no se salta la validacion', () =>
     });
 });
 
-test('buildTelegram acepta numeros en addressPrefix y los serializa como su forma texto', () => {
-    assert.equal(
-        buildTelegram('I!GX05', { addressPrefix: [0, 254, 1] }),
-        `0${ETX}254${ETX}1${ETX}I!GX05`,
-    );
+test('buildTelegram rechaza numeros en addressPrefix: perderian el cero de relleno en silencio', () => {
+    // String(1) es '1', no '001': aceptar el numero direccionaria distinto
+    // sin que nada en la trama avisara de que el campo cambio.
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: [0, 254, 1] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram rechaza un solo campo no-string entre strings validos', () => {
+    assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', 254, '001'] }), (err) => {
+        assert.equal(err.code, 'protocol');
+        return true;
+    });
+});
+
+test('buildTelegram rechaza otros tipos no-string: boolean, objeto, array y wrapper String', () => {
+    for (const bad of [true, { a: 1 }, ['0'], new String('001')]) {
+        assert.throws(() => buildTelegram('I!GX05', { addressPrefix: ['0', bad, '001'] }), (err) => {
+            assert.equal(err.code, 'protocol');
+            return true;
+        }, `${Object.prototype.toString.call(bad)} deberia rechazarse`);
+    }
 });
 
 test('weigh envia la trama de pesos y devuelve neto, tara y bruto en gramos', async () => {

@@ -37,36 +37,41 @@ const FIELD_MAP = Object.freeze({ GD01: 'net', GD02: 'tare', GD07: 'gross' });
 const INVALID_ADDRESS_CHARS = /[\x00-\x1F\x7F]/;
 
 /**
- * Convierte un elemento de addressPrefix al string que de verdad se va a
- * enviar, y lo valida sobre ESE string. Antes se validaba `String(raw)` pero
- * se serializaba con `prefix.join(ETX)`, y esas dos conversiones no coinciden:
- * `String(null)` da `'null'` (no vacio, sin caracteres de control: pasaba la
- * validacion) pero `[..., null, ...].join(ETX)` renderiza ese hueco como
- * cadena vacia (colapsa el campo igual que si hubiera sido `''` a mano). Un
- * agujero de array disperso (`['0', , '001']`) es peor todavia: `forEach` ni
- * siquiera llama al callback para el hueco, asi que la validacion se saltaba
- * por completo. La correccion es estructural: normalizar una sola vez por
- * indice (con acceso directo `prefix[i]`, que si devuelve `undefined` para un
- * hueco), validar el resultado, y construir la trama uniendo ESE array
- * normalizado — nunca el array original del llamador.
+ * Valida un elemento de addressPrefix y lo devuelve tal cual, para que
+ * buildTelegram construya la trama uniendo ESE valor devuelto — nunca el
+ * array original del llamador. Round 1 validaba sobre un string derivado
+ * pero serializaba con `prefix.join(ETX)` sobre el array de entrada, y las
+ * dos conversiones no coincidian (p.ej. `null`/`undefined` colapsaban a
+ * campo vacio en el join aunque `String(null)` pasara la validacion, y un
+ * hueco de array disperso ni siquiera llamaba al validador via `forEach`).
+ * La correccion estructural de round 2 fue normalizar una sola vez, con
+ * acceso directo por indice (`prefix[i]`, que da `undefined` para un hueco),
+ * y validar y serializar sobre ese mismo valor.
  *
- * `null` y `undefined` (explicitos o por hueco) se rechazan en vez de
- * normalizarse a texto: un campo que el llamador no proporciono es un error
- * de configuracion, y tanto mandar el texto literal `"null"` como colapsar el
- * campo en silencio son peores que un mensaje claro.
+ * Round 2 seguia coaccionando cualquier tipo a string con `String(raw)`, lo
+ * que colaba un numero como `1` para el campo que en produccion es `'001'`:
+ * `String(1) === '1'`, sin el cero de relleno, con el mismo resultado
+ * practico que un campo mal escrito a mano — direccionamiento incorrecto,
+ * sin ningun error ni nada visiblemente raro en la trama. Aceptar `null`,
+ * `undefined` y cadenas vacias como errores pero coaccionar numeros en
+ * silencio era inconsistente con la filosofia "rechazar en vez de corregir en
+ * silencio" que motiva todo este validador. Por eso ahora solo se acepta
+ * `typeof raw === 'string'`: cualquier otro tipo (number, boolean, object,
+ * array, `null`, `undefined`, o un wrapper `new String(...)`, cuyo `typeof`
+ * es `'object'`) se rechaza con un mensaje que pide explicitamente la forma
+ * string con el cero de relleno.
  */
 function normalizeAddressElement(raw, index) {
-    if (raw === null || raw === undefined) {
-        throw new ScaleError('protocol', `addressPrefix[${index}] no puede ser null ni undefined`, { addressPrefix: raw, index });
+    if (typeof raw !== 'string') {
+        throw new ScaleError('protocol', `addressPrefix[${index}] debe ser un string, no ${typeof raw}; escribelo entre comillas y con el cero de relleno si lo lleva (p.ej. "001", no 1)`, { addressPrefix: raw, index });
     }
-    const value = String(raw);
-    if (value.length === 0) {
+    if (raw.length === 0) {
         throw new ScaleError('protocol', `addressPrefix[${index}] esta vacio`, { addressPrefix: raw, index });
     }
-    if (INVALID_ADDRESS_CHARS.test(value)) {
-        throw new ScaleError('protocol', `addressPrefix[${index}] contiene un caracter de control no permitido: ${JSON.stringify(value)}`, { addressPrefix: raw, index });
+    if (INVALID_ADDRESS_CHARS.test(raw)) {
+        throw new ScaleError('protocol', `addressPrefix[${index}] contiene un caracter de control no permitido: ${JSON.stringify(raw)}`, { addressPrefix: raw, index });
     }
-    return value;
+    return raw;
 }
 
 function buildTelegram(body, options = {}) {
