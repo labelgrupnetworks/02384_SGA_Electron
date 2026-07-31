@@ -640,8 +640,8 @@ Dos módulos pequeños que todo lo demás usa. Van juntos porque ninguno tiene s
 **Interfaces:**
 - Consumes: nada.
 - Produces:
-  - `ScaleError` — clase con `code` y `detail`. Códigos válidos en `ERROR_CODES`: `connect`, `timeout`, `protocol`, `not_supported`, `overload`, `unknown_brand`.
-  - `httpStatusFor(code) → number` — 400 `unknown_brand`, 501 `not_supported`, 502 `connect`, 504 `timeout`, 500 el resto.
+  - `ScaleError` — clase con `code` y `detail`. Códigos válidos en `ERROR_CODES`: `connect`, `timeout`, `protocol`, `not_supported`, `overload`, `unknown_brand`, `missing_params`.
+  - `httpStatusFor(code) → number` — 400 `unknown_brand` y `missing_params`, 501 `not_supported`, 502 `connect`, 504 `timeout`, 500 el resto.
   - `toGrams(rawValue, unit, exponent = 0) → {value: number, unit: 'g'}` — lanza `ScaleError` con code `protocol` si la unidad no se conoce.
   - `KNOWN_UNITS` — `Set` de unidades que MT-SICS puede devolver, para el filtro de "esto es un peso".
 
@@ -745,10 +745,12 @@ const ERROR_CODES = Object.freeze([
     'not_supported',  // la operacion no existe en esta bascula
     'overload',       // sobrecarga o bajo rango
     'unknown_brand',  // marca no registrada
+    'missing_params', // faltan ip, port o brand en la peticion
 ]);
 
 const HTTP_STATUS = Object.freeze({
     unknown_brand: 400,
+    missing_params: 400,
     not_supported: 501,
     connect: 502,
     timeout: 504,
@@ -3126,7 +3128,9 @@ async function runOperation(operation, req, res, logger) {
             model,
             op: operation,
             error: {
-                code: 'unknown_brand',
+                // missing_params, no unknown_brand: "no me has mandado ip" no es
+                // "esa marca no existe", y el SGA ramifica sobre este codigo.
+                code: 'missing_params',
                 message: 'Faltan parámetros requeridos: ip, port, brand',
                 detail: null,
             },
@@ -3363,7 +3367,8 @@ Si el equipo no tiene zumbador el pitido se omite y la pesada sigue: el `ES` que
 
 | `code` | HTTP | Significado |
 |---|---|---|
-| `unknown_brand` | 400 | marca no registrada, o faltan `ip`/`port`/`brand` |
+| `unknown_brand` | 400 | marca no registrada |
+| `missing_params` | 400 | faltan `ip`, `port` o `brand` |
 | `not_supported` | 501 | esa báscula no sabe hacer esa operación |
 | `connect` | 502 | no se pudo abrir el socket |
 | `timeout` | 504 | conectó pero no contestó |
