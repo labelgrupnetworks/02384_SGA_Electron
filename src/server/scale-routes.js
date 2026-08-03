@@ -2,6 +2,19 @@ const { registry, OPERATIONS, routePathFor } = require('../scales');
 const { TcpLink } = require('../scales/transport');
 const { ScaleError, httpStatusFor } = require('../scales/errors');
 
+// Deriva un mensaje legible de cualquier valor, sin poder lanzar nunca. Un
+// `.message` que sea un getter que lance, o un `toString()` que lance (o que
+// no exista, como en un objeto con prototipo null), rompen `String(error)` o
+// el propio acceso a `error.message`. Este es el camino de error: si el
+// camino de error puede fallar, es peor que no tener camino de error.
+function safeMessage(error) {
+    try {
+        return String(error?.message ?? error);
+    } catch {
+        return 'error no representable';
+    }
+}
+
 // Normaliza cualquier valor lanzado (no solo instancias de Error) a
 // {code, message, detail}. Un driver o dependencia puede lanzar `null`, un
 // string o un objeto plano, y el contrato {code, message, detail} de la
@@ -10,7 +23,7 @@ function normalizeError(error) {
     if (error instanceof ScaleError) {
         return { code: error.code, message: error.message, detail: error.detail };
     }
-    return { code: 'protocol', message: String(error?.message ?? error), detail: null };
+    return { code: 'protocol', message: safeMessage(error), detail: null };
 }
 
 function fail(res, { brand = null, model = null, op, error }) {

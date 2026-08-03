@@ -356,6 +356,75 @@ test('un driver que lanza un objeto plano no rompe el envelope de error', async 
     });
 });
 
+test('un driver que lanza un objeto cuyo getter de message lanza no rompe el envelope', async () => {
+    // El primer round de esta correccion normalizaba con
+    // `String(error?.message ?? error)`, que sigue lanzando si LEER
+    // `error.message` lanza. Este es justo ese caso: un getter de message
+    // que explota al leerlo, no un message ausente.
+    const thrown = {
+        get message() {
+            throw new Error('el getter de message tambien exploto');
+        },
+    };
+    await withThrowingDriver(thrown, async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+    });
+});
+
+test('un driver que lanza un objeto cuyo toString lanza no rompe el envelope', async () => {
+    // Sin `.message`, `String(error)` cae a `toString()`. Si ese `toString`
+    // tambien lanza, la misma clase de fallo aparece por una puerta distinta.
+    const thrown = {
+        toString() {
+            throw new Error('el toString tambien exploto');
+        },
+    };
+    await withThrowingDriver(thrown, async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+    });
+});
+
+test('un driver que lanza un objeto sin prototipo (sin toString) no rompe el envelope', async () => {
+    // Object.create(null) no tiene ni toString ni valueOf: String(objeto) no
+    // tiene ningun metodo al que recurrir y lanza "Cannot convert object to
+    // primitive value". Es otra forma de que la derivacion del mensaje pueda
+    // lanzar sin que nadie haya escrito un toString malicioso a proposito.
+    const thrown = Object.create(null);
+    await withThrowingDriver(thrown, async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+    });
+});
+
 test('todas las operaciones del registro tienen ruta montada', async () => {
     const { OPERATIONS, routePathFor } = require('../src/scales');
     const app = await startApp();
