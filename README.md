@@ -10,6 +10,7 @@
 - 🚀 **Auto-inicio**: Se ejecuta automáticamente al iniciar Windows
 - 📡 **API REST**: Endpoint `/ip` para obtener la IP programáticamente
 - 🔒 **Single Instance**: Previene múltiples instancias ejecutándose
+- ⚖️ **Básculas Mettler Toledo y Bizerba**: API normalizada `/scale/*` con pesada guiada
 
 ## 🏗️ Estructura del Proyecto
 
@@ -24,7 +25,21 @@
 ├── icon.ico/.png        # Iconos de la aplicación
 ├── logo-fedefarma.png   # Logo para splash screen
 ├── .env                 # Variables de entorno (crear manualmente)
-└── README.md           # Documentación
+├── src/
+│   ├── server/
+│   │   ├── legacy-routes.js   # /scale-command y /scale-hex (compatibilidad)
+│   │   └── scale-routes.js    # /scale/* y /health
+│   └── scales/
+│       ├── transport.js       # TcpLink: enmarcado por líneas, lectura hasta silencio
+│       ├── registry.js        # marca+modelo → driver
+│       ├── units.js           # normalización a gramos
+│       ├── errors.js          # ScaleError y mapeo a HTTP
+│       └── drivers/
+│           ├── mettler-toledo.js
+│           ├── mt-sics-protocol.js
+│           └── bizerba.js
+├── test/                # pruebas con node:test (excluidas del paquete)
+└── README.md            # Documentación
 ```
 
 ## 🛠️ Tecnologías Utilizadas
@@ -213,6 +228,102 @@ Respuesta:
 ```
 
 > La trama de ejemplo termina en `0D 0A` (CRLF). Decodificada en ASCII es: `0<ETX>254<ETX>001<ETX>I!GX06<CRLF>`.
+
+### API de básculas (scale-v1)
+
+Los endpoints `/scale-command` y `/scale-hex` de arriba **siguen funcionando igual** y no van a cambiar: son la compatibilidad para instalaciones que no han actualizado. Lo nuevo vive bajo `/scale/*` y conoce el protocolo, así que quien llama no monta tramas.
+
+#### Descubrir qué sabe hacer esta instalación
+
+```bash
+GET http://localhost:3000/health
+```
+```json
+{ "version": "1.3.0", "apis": ["legacy", "scale-v1"], "brands": ["mettler_toledo", "bizerba"] }
+```
+
+Una versión anterior de VerentiaIP devuelve **404** aquí. Ese 404 es la señal de que solo soporta los endpoints heredados.
+
+```bash
+GET http://localhost:3000/scale/brands
+```
+Devuelve, por marca: `label`, `defaultPort`, `capabilities` (garantizadas), `deviceDependent` (existen en el protocolo pero según el equipo) y `models` con override conocido.
+
+#### Operaciones
+
+Todas son `POST` con `{ip, port, brand}` obligatorios y `model`, `options` opcionales.
+
+| Ruta | Mettler Toledo | Bizerba |
+|---|---|---|
+| `/scale/weigh` | sí | sí |
+| `/scale/tare` | sí | sí |
+| `/scale/clear-tare` | sí | sí |
+| `/scale/info` | sí | sí |
+| `/scale/select-platform` | según equipo | sí |
+| `/scale/zero` | sí | 501 |
+| `/scale/display` | sí | 501 |
+| `/scale/display-clear` | sí | 501 |
+| `/scale/beep` | según equipo | 501 |
+| `/scale/guided-weigh` | sí | 501 |
+
+```bash
+POST http://localhost:3000/scale/weigh
+{ "ip": "192.168.0.86", "port": 4305, "brand": "mettler_toledo" }
+```
+```json
+{
+  "success": true, "brand": "mettler_toledo", "model": null, "op": "weigh",
+  "data": {
+    "net":   { "value": 1234, "unit": "g" },
+    "tare":  { "value": 50,   "unit": "g" },
+    "gross": { "value": 1284, "unit": "g" },
+    "stable": true
+  },
+  "raw": ["S S 1.234 kg", "TA A 0.050 kg"]
+}
+```
+
+Los pesos salen **siempre en gramos**. `raw` lleva las líneas tal como las devolvió el equipo, que es lo único que sirve para depurar una báscula que contesta algo inesperado.
+
+#### Pesada guiada
+
+Muestra un texto, pita y pesa en una sola llamada sobre una sola conexión. El display se restaura al modo peso al terminar, también si la pesada falla.
+
+```bash
+POST http://localhost:3000/scale/guided-weigh
+{ "ip": "192.168.0.86", "port": 4305, "brand": "mettler_toledo",
+  "text": "PESAR BIDON 3", "beep": true, "waitStable": true, "timeoutMs": 10000 }
+```
+
+Si el equipo no tiene zumbador el pitido se omite y la pesada sigue: el `ES` queda anotado en `raw`.
+
+#### Errores
+
+```json
+{ "success": false, "brand": "bizerba", "model": null, "op": "zero",
+  "error": { "code": "not_supported", "message": "…", "detail": null } }
+```
+
+| `code` | HTTP | Significado |
+|---|---|---|
+| `unknown_brand` | 400 | marca no registrada |
+| `missing_params` | 400 | faltan `ip`, `port` o `brand` |
+| `not_supported` | 501 | esa báscula no sabe hacer esa operación |
+| `connect` | 502 | no se pudo abrir el socket |
+| `timeout` | 504 | conectó pero no contestó |
+| `protocol` | 500 | contestó algo que no encaja |
+| `overload` | 500 | sobrecarga o bajo rango |
+
+`not_supported` llega por dos vías indistinguibles a propósito: el driver no declara la operación, o el equipo contestó `ES` (en MT-SICS, "no reconozco este comando"). Una ICS sin zumbador da 501 en `/scale/beep` sin configurar nada.
+
+#### Opciones por instalación
+
+`options.addressPrefix` cambia el direccionamiento de las tramas Bizerba, que por defecto es `["0", "254", "001"]`. Los elementos **deben ser strings** (escribir `"001"` no `1`), porque un número pierde el cero de relleno y direccionaría el equipo equivocado.
+
+```json
+{ "ip": "10.32.230.18", "port": 10051, "brand": "bizerba",
+  "options": { "addressPrefix": ["1", "200", "002"] } }
+```
 
 ### WebSocket
 ```javascript
