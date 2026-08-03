@@ -85,6 +85,50 @@ test('faltar ip, port o brand es 400 missing_params, no unknown_brand', async ()
     }
 });
 
+test('un ip con forma invalida es 400 missing_params, no 500 ni conexion a localhost', async () => {
+    const app = await startApp();
+    try {
+        for (const ip of [{}, [], 123, true, '']) {
+            const res = await post(app.base, '/scale/weigh', { ip, port: 4305, brand: 'mettler_toledo' });
+            assert.equal(res.status, 400, JSON.stringify(ip));
+            const body = await res.json();
+            assert.equal(body.success, false);
+            assert.equal(body.error.code, 'missing_params', JSON.stringify(ip));
+        }
+    } finally {
+        await app.close();
+    }
+});
+
+test('un port con forma invalida es 400 missing_params, no un error crudo de Node', async () => {
+    const app = await startApp();
+    try {
+        for (const port of ['abc', 0, 99999, -1, 1.5, {}, null]) {
+            const res = await post(app.base, '/scale/weigh', { ip: '127.0.0.1', port, brand: 'mettler_toledo' });
+            assert.equal(res.status, 400, JSON.stringify(port));
+            const body = await res.json();
+            assert.equal(body.success, false);
+            assert.equal(body.error.code, 'missing_params', JSON.stringify(port));
+        }
+    } finally {
+        await app.close();
+    }
+});
+
+test('un port valido como string numerico se acepta igual que un port numerico', async () => {
+    const app = await startApp();
+    const scale = await createLineScale({ S: 'S S 1.234 kg', TA: 'TA A 0.000 kg' });
+    try {
+        const res = await post(app.base, '/scale/weigh', { ip: '127.0.0.1', port: String(scale.port), brand: 'mettler_toledo' });
+        const body = await res.json();
+        assert.equal(res.status, 200, JSON.stringify(body));
+        assert.equal(body.success, true);
+    } finally {
+        await app.close();
+        await scale.close();
+    }
+});
+
 test('una marca desconocida es 400 unknown_brand con la lista valida', async () => {
     const app = await startApp();
     try {

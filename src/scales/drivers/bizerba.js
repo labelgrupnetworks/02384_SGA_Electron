@@ -75,7 +75,14 @@ function normalizeAddressElement(raw, index) {
 }
 
 function buildTelegram(body, options = {}) {
-    const prefix = options.addressPrefix || DEFAULT_ADDRESS_PREFIX;
+    // `options` puede llegar `null` (el SGA manda `"options": null` cuando el
+    // operador no toco nada, no `{}` ni el campo ausente): el valor por
+    // defecto del parametro solo actua sobre `undefined`, asi que un
+    // `options.addressPrefix` directo revienta con un TypeError ("Cannot read
+    // properties of null") que /scale/* devolveria como 500 en vez de tratar
+    // null igual que "sin opciones". El encadenamiento opcional cubre los dos
+    // casos (options ausente u options null) sin necesitar una rama aparte.
+    const prefix = options?.addressPrefix || DEFAULT_ADDRESS_PREFIX;
     if (!Array.isArray(prefix) || prefix.length !== 3) {
         throw new ScaleError('protocol', 'addressPrefix debe tener exactamente tres campos', { addressPrefix: prefix });
     }
@@ -113,6 +120,16 @@ function parseWeights(response) {
         if (triplet.length < 3) return;
         const [unit, exponent, value] = triplet;
         if (!/^[+-]?\d+(\.\d+)?$/.test(value)) return;
+        // El exponente es siempre entero (puede ser legitimamente negativo,
+        // p.ej. -3 para gramos desde una base en kg): un triplete como
+        // `kg;abc;1234` o `kg;1.5;1234` hacia que `Number(exponent)` diera
+        // NaN, y `10 ** NaN` es NaN, que JSON.stringify serializa como
+        // `null` -- el campo quedaba con la MISMA forma que "ausente", pero
+        // por una razon distinta (dato corrupto, no dato que falta) y sin que
+        // nada lo distinguiera. Se valida con el mismo rigor que value, y si
+        // no pasa se trata igual que cualquier otro triplete malformado: el
+        // campo se queda a null en vez de forzar un valor derivado de basura.
+        if (!/^[+-]?\d+$/.test(exponent)) return;
         weights[key] = toGrams(Number(value), unit, Number(exponent));
     });
 
@@ -132,11 +149,17 @@ const driver = {
     // tramas. El registro hace que respondan 501 sin abrir socket.
     deviceDependent: [],
 
-    // Sin overrides de modelo. El main.js original (037efa7:234) anotaba que las
-    // IS30 "suelen usar terminacion \r o \r\n", pero es un comentario dubitativo y
-    // \r\n es el valor que funciona hoy en produccion por la ruta heredada. Forzar
-    // \r para is30 dejaria muda una bascula que funciona. Un modelo sin override usa
-    // la linea base, que es justo lo correcto mientras no haya evidencia mejor.
+    // Sin overrides de modelo. El main.js original llevaba esta observacion,
+    // citada aqui tal cual porque es la unica pista que queda de por que
+    // alguien penso que hacia falta distinguir por modelo:
+    //   // Las IS30 suelen usar terminación \r o \r\n
+    //   (037efa7:main.js:234)
+    // Es un "suelen", no una confirmacion, y \r\n es el valor que funciona hoy
+    // en produccion por la ruta heredada: forzar \r para is30 dejaria muda una
+    // bascula que funciona. Lo que zanjaria esto es una IS30 real (o su manual
+    // BCP) confirmando el terminador que realmente usa; hasta entonces, un
+    // modelo sin override usa la linea base, que es lo correcto mientras no
+    // haya evidencia mejor. No se anade override sin esa confirmacion.
     models: {},
 
     async weigh(link, { options } = {}) {

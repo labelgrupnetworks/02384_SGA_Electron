@@ -110,7 +110,19 @@ class TcpLink {
         }
     }
 
-    /** Descarta lo que quede del comando anterior. */
+    /**
+     * Descarta, del lado JS, lo que ya hubiera llegado y quedado sin consumir
+     * de un comando anterior (`this.buffer`/`this.pending`) justo antes de
+     * enviar el siguiente.
+     *
+     * Esto NO garantiza que la respuesta leida despues pertenezca al comando
+     * que se acaba de enviar: una linea que llegue por el cable DESPUES de
+     * este drenado (por ejemplo una respuesta tardia del comando anterior, o
+     * una notificacion no solicitada) sigue pudiendo colarse como si fuera la
+     * respuesta del nuevo comando. Esa garantia la da `assertOk` comparando el
+     * primer token de cada linea contra el comando esperado (Critical 1 de la
+     * revision final), no este drenado.
+     */
     _drain() {
         this.pending = [];
         this.buffer = '';
@@ -148,7 +160,16 @@ class TcpLink {
      * resolviendola de inmediato con lo que llevara acumulado hasta ese punto.
      */
     _readLines(quiet, total) {
-        const deadline = Date.now() + total;
+        // Defensa de ultimo recurso: quiet/total pueden llegar no numericos o no
+        // positivos desde una capa superior (p.ej. `timeoutMs` como string desde
+        // un body HTTP: `Date.now() + "10000"` es concatenacion, no suma, y la
+        // comparacion contra ese "deadline" no vence nunca). Un primitivo de
+        // transporte no debe poder colgarse para siempre porque quien lo llama
+        // paso un valor raro: si no es un numero finito y positivo, cae al valor
+        // por defecto de este framing en vez de propagar el valor malo.
+        const safeQuiet = (Number.isFinite(quiet) && quiet > 0) ? quiet : this.framing.quietMs;
+        const safeTotal = (Number.isFinite(total) && total > 0) ? total : this.framing.totalMs;
+        const deadline = Date.now() + safeTotal;
         return new Promise((resolve, reject) => {
             const ctx = { lines: [], timer: null };
             ctx.cancel = () => resolve(ctx.lines);
@@ -192,7 +213,7 @@ class TcpLink {
                         } else {
                             tick();
                         }
-                    }, quiet);
+                    }, safeQuiet);
                     return;
                 }
                 if (now >= deadline) {

@@ -53,10 +53,21 @@ function createRegistry(drivers) {
     const byId = new Map();
     for (const driver of drivers) {
         validate(driver);
+        // Un override de modelo puede tocar `capabilities`/`deviceDependent` (o
+        // cualquier otra clave) via mergeOverride, y mergeOverride en si mismo
+        // no revalida coherencia: un override que declarase una capacidad no
+        // implementada, o duplicada, pasaria desapercibido hasta que alguien
+        // pidiera justo ese modelo en produccion, y reventaria entonces como un
+        // 500 en vez de fallar aqui, al arrancar, que es donde un catalogo mal
+        // escrito deberia fallar. Se revalida cada modelo declarado del driver
+        // con el mismo `validate` de la linea base.
+        for (const model of Object.keys(driver.models || {})) {
+            validate(mergeOverride(driver, driver.models[model]));
+        }
         byId.set(driver.id, driver);
     }
 
-    function resolveDriver(brand, model = null) {
+    function resolveDriver(brand, model = null, logger = null) {
         const base = byId.get(brand);
         if (!base) {
             throw new ScaleError('unknown_brand', `marca no soportada: ${brand}`, {
@@ -66,8 +77,14 @@ function createRegistry(drivers) {
         }
         if (!model) return base;
         const override = (base.models || {})[model];
-        // Un modelo sin override es el caso normal: el catalogo del SGA es mas
-        // amplio que esta tabla porque solo se da de alta lo que se desvia.
+        if (override === undefined) {
+            // Un modelo sin override es el caso normal: el catalogo del SGA es mas
+            // amplio que esta tabla porque solo se da de alta lo que se desvia.
+            // Se registra en debug, no como aviso, para no llenar el log de
+            // ruido en el caso corriente; `logger` es opcional para no atar este
+            // modulo a ninguna dependencia concreta de logging.
+            logger?.debug?.(`modelo '${model}' de '${brand}' sin override registrado; se usa la linea base`);
+        }
         return mergeOverride(base, override);
     }
 

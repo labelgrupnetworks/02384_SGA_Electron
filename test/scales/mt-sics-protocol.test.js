@@ -48,11 +48,11 @@ test('parseWeight ignora un valor no numerico aunque la unidad sea buena', () =>
 });
 
 test('assertOk devuelve los tokens de una respuesta correcta', () => {
-    assert.deepEqual(assertOk(['Z A']), ['Z', 'A']);
+    assert.deepEqual(assertOk(['Z A'], 'Z'), ['Z', 'A']);
 });
 
 test('assertOk traduce ES a not_supported, porque el equipo no conoce el comando', () => {
-    assert.throws(() => assertOk(['ES']), (err) => {
+    assert.throws(() => assertOk(['ES'], 'DS'), (err) => {
         assert.ok(err instanceof ScaleError);
         assert.equal(err.code, 'not_supported');
         return true;
@@ -61,7 +61,7 @@ test('assertOk traduce ES a not_supported, porque el equipo no conoce el comando
 
 test('assertOk traduce ET y EL a protocol', () => {
     for (const code of ['ET', 'EL']) {
-        assert.throws(() => assertOk([code]), (err) => {
+        assert.throws(() => assertOk([code], 'S'), (err) => {
             assert.equal(err.code, 'protocol', `${code} deberia ser protocol`);
             return true;
         });
@@ -69,24 +69,24 @@ test('assertOk traduce ET y EL a protocol', () => {
 });
 
 test('assertOk traduce + y - a overload', () => {
-    assert.throws(() => assertOk(['S +']), (err) => {
+    assert.throws(() => assertOk(['S +'], 'S'), (err) => {
         assert.equal(err.code, 'overload');
         assert.equal(err.detail.status, '+');
         return true;
     });
-    assert.throws(() => assertOk(['S -']), (err) => {
+    assert.throws(() => assertOk(['S -'], 'S'), (err) => {
         assert.equal(err.code, 'overload');
         return true;
     });
 });
 
 test('assertOk traduce I y L a protocol con el estado en detail', () => {
-    assert.throws(() => assertOk(['T I']), (err) => {
+    assert.throws(() => assertOk(['T I'], 'T'), (err) => {
         assert.equal(err.code, 'protocol');
         assert.equal(err.detail.status, 'I');
         return true;
     });
-    assert.throws(() => assertOk(['SNS L']), (err) => {
+    assert.throws(() => assertOk(['SNS L'], 'SNS'), (err) => {
         assert.equal(err.code, 'protocol');
         assert.equal(err.detail.status, 'L');
         return true;
@@ -94,14 +94,50 @@ test('assertOk traduce I y L a protocol con el estado en detail', () => {
 });
 
 test('assertOk sin lineas es timeout', () => {
-    assert.throws(() => assertOk([]), (err) => {
+    assert.throws(() => assertOk([], 'S'), (err) => {
         assert.equal(err.code, 'timeout');
         return true;
     });
 });
 
 test('assertOk acepta el estado D de peso dinamico', () => {
-    assert.deepEqual(assertOk(['S D 0.500 kg']), ['S', 'D', '0.500', 'kg']);
+    assert.deepEqual(assertOk(['S D 0.500 kg'], 'S'), ['S', 'D', '0.500', 'kg']);
+});
+
+// --- C1: emparejamiento de la respuesta con el comando que se envio ---
+
+test('assertOk ignora una linea que no pertenece al comando y usa la que si', () => {
+    // Reproduce el escenario de la revision: una linea "S ..." que sobro de un
+    // comando anterior llega dentro de la ventana de lectura de "TA".
+    assert.deepEqual(
+        assertOk(['S S 1.234 kg', 'TA A 0.000 kg'], 'TA'),
+        ['TA', 'A', '0.000', 'kg'],
+    );
+});
+
+test('assertOk falla con protocol si ninguna linea corresponde al comando esperado', () => {
+    // Nunca debe caer de vuelta silenciosamente a lines[0] cuando esa linea es
+    // de otro comando: eso es exactamente lo que causaba el tara equivocado.
+    assert.throws(() => assertOk(['S S 1.234 kg'], 'TA'), (err) => {
+        assert.ok(err instanceof ScaleError);
+        assert.equal(err.code, 'protocol');
+        assert.equal(err.detail.command, 'TA');
+        return true;
+    });
+});
+
+test('assertOk reconoce un fatal (ES/ET/EL) aunque no lleve el prefijo del comando', () => {
+    assert.throws(() => assertOk(['ES'], 'TA'), (err) => {
+        assert.equal(err.code, 'not_supported');
+        return true;
+    });
+});
+
+test('assertOk descarta varias lineas ajenas seguidas hasta encontrar la del comando', () => {
+    assert.deepEqual(
+        assertOk(['S S 1.234 kg', 'S S 1.235 kg', 'TA A 0.050 kg'], 'TA'),
+        ['TA', 'A', '0.050', 'kg'],
+    );
 });
 
 test('isStable distingue S de D', () => {

@@ -2,10 +2,16 @@ const { ScaleError } = require('../errors');
 const { toGrams } = require('../units');
 const { assertOk, parseWeight, isStable } = require('./mt-sics-protocol');
 
-/** Ejecuta un comando y devuelve los tokens ya validados junto a las lineas crudas. */
+/**
+ * Ejecuta un comando y devuelve los tokens ya validados junto a las lineas
+ * crudas. `command` puede llevar argumento (`SNS 2`, `D "texto"`); solo el
+ * primer token (el nombre del comando) es lo que assertOk exige ver
+ * reflejado en la respuesta.
+ */
 async function ask(link, command, options = {}) {
     const lines = await link.command(command, options);
-    return { tokens: assertOk(lines), lines };
+    const commandName = command.split(/\s+/)[0];
+    return { tokens: assertOk(lines, commandName), lines };
 }
 
 function weightOrFail(tokens, command) {
@@ -61,6 +67,20 @@ const driver = {
      * operario ve un display congelado sin saber por que.
      */
     async guidedWeigh(link, { text, beep = false, waitStable = true, timeoutMs = 10000 } = {}) {
+        // timeoutMs llega tal cual del body HTTP del SGA: un JSON puede llevarlo
+        // como string, y `Date.now() + "10000"` en transport.js es concatenacion,
+        // no suma, asi que la lectura nunca vencia y el socket se quedaba abierto
+        // para siempre (revision final, Critical 2). transport.js ya cae a un
+        // valor por defecto si esto le llegara igualmente mal, pero un valor
+        // invalido puesto aqui, en el limite con la peticion HTTP, merece un
+        // error claro en vez de una sustitucion silenciosa por 10000.
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+            throw new ScaleError(
+                'protocol',
+                `timeoutMs debe ser un numero finito y positivo, recibido: ${JSON.stringify(timeoutMs)}`,
+                { timeoutMs },
+            );
+        }
         const raw = [];
         let weighed = null;
         let failure = null;

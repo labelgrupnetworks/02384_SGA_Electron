@@ -8,8 +8,12 @@ module.exports = {
     icon: './icon', // Forge añade automáticamente la extensión (.ico en Windows)
     appBundleId: "com.labelgrup.verentia",
     executableName: "VerentiaIP",
+    // Forge empaqueta el directorio de trabajo tal cual, no lo que este en git:
+    // `.superpowers/` (notas internas de la revision, con IPs de piso de planta
+    // como 192.168.0.86) no estaba en esta lista y se colaba entera (~1.2MB) en
+    // el paquete final, visible para cualquiera que abra el .asar instalado.
     ignore: [
-      /^\/(\.git|\.vscode|\.idea|docs|test|tests|publish\.js)($|\/)/
+      /^\/(\.git|\.vscode|\.idea|docs|test|tests|publish\.js|\.superpowers)($|\/)/
     ]
   },
   rebuildConfig: {},

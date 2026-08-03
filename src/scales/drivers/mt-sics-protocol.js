@@ -48,24 +48,58 @@ function parseWeight(tokens) {
     return { value: Number(raw), unit };
 }
 
-function assertOk(lines) {
+/**
+ * Valida la respuesta de `command` contra `lines`, exigiendo que la linea
+ * usada como respuesta sea realmente la de ese comando.
+ *
+ * MT-SICS echoa el nombre del comando como primer token de su respuesta
+ * (`S S 1.234 kg`, `TA A 0.000 kg`...), salvo los fatales `ES`/`ET`/`EL`, que
+ * llegan como token suelto sin prefijo. Antes esta funcion miraba solo
+ * `lines[0]`: si una bascula dejada en modo `SIR`/`SR` (o cualquier respuesta
+ * que llegue tarde, despues de `quietMs` o de que expire `totalMs` de un
+ * comando previo) dejaba una linea sin consumir en el buffer, esa linea
+ * ajena se colaba como respuesta del comando siguiente sin que nada lo
+ * detectara -- reproducido en la revision final como un tara y un bruto
+ * incorrectos devueltos con HTTP 200. Ahora se recorren las lineas en orden
+ * y se descarta cualquiera cuyo primer token no sea ni el comando esperado
+ * ni un fatal; si ninguna encaja, es protocol en vez de aceptar la primera
+ * que hubiera, silenciosamente equivocada.
+ */
+function assertOk(lines, command) {
     if (!lines || lines.length === 0) {
         throw new ScaleError('timeout', 'la bascula no contesto');
     }
 
-    const tokens = splitTokens(lines[0]);
+    let tokens = null;
+    let matchedLine = null;
+    for (const line of lines) {
+        const candidate = splitTokens(line);
+        if (candidate[0] === command || FATAL[candidate[0]]) {
+            tokens = candidate;
+            matchedLine = line;
+            break;
+        }
+    }
+
+    if (!tokens) {
+        throw new ScaleError(
+            'protocol',
+            `ninguna linea de la respuesta corresponde al comando ${command}`,
+            { command, lines },
+        );
+    }
 
     const fatal = FATAL[tokens[0]];
     if (fatal) {
-        throw new ScaleError(fatal[0], fatal[1], { response: lines[0] });
+        throw new ScaleError(fatal[0], fatal[1], { response: matchedLine });
     }
 
     const status = tokens[1];
     if (status === '+' || status === '-') {
-        throw new ScaleError('overload', STATUS_LABEL[status], { status, response: lines[0] });
+        throw new ScaleError('overload', STATUS_LABEL[status], { status, response: matchedLine });
     }
     if (status === 'I' || status === 'L') {
-        throw new ScaleError('protocol', STATUS_LABEL[status], { status, response: lines[0] });
+        throw new ScaleError('protocol', STATUS_LABEL[status], { status, response: matchedLine });
     }
 
     return tokens;

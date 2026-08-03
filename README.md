@@ -247,7 +247,7 @@ Una versión anterior de VerentiaIP devuelve **404** aquí. Ese 404 es la señal
 ```bash
 GET http://localhost:3000/scale/brands
 ```
-Devuelve, por marca: `label`, `defaultPort`, `capabilities` (garantizadas), `deviceDependent` (existen en el protocolo pero según el equipo) y `models` con override conocido.
+Devuelve, por marca: `id` (el valor que se manda como `brand` en las operaciones), `label`, `defaultPort`, `capabilities` (garantizadas), `deviceDependent` (existen en el protocolo pero según el equipo) y `models` con override conocido.
 
 #### Operaciones
 
@@ -294,6 +294,8 @@ POST http://localhost:3000/scale/guided-weigh
 { "ip": "192.168.0.86", "port": 4305, "brand": "mettler_toledo",
   "text": "PESAR BIDON 3", "beep": true, "waitStable": true, "timeoutMs": 10000 }
 ```
+
+Todos los campos salvo `ip`, `port` y `brand` son opcionales, con estos valores por defecto si se omiten: `text` sin texto (no se envía nada al display), `beep: false`, `waitStable: true` y `timeoutMs: 10000` (ms).
 
 Si el equipo no tiene zumbador el pitido se omite y la pesada sigue: el `ES` queda anotado en `raw`.
 

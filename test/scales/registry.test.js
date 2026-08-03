@@ -43,6 +43,39 @@ test('un modelo sin override cae a la base sin fallar', () => {
     assert.equal(driver.framing.terminator, '\r\n');
 });
 
+test('resolveDriver sin logger no lanza (logger es opcional)', () => {
+    const registry = createRegistry([toyDriver()]);
+    assert.doesNotThrow(() => registry.resolveDriver('toy', 'ics425'));
+});
+
+test('resolveDriver registra en debug cuando el modelo no tiene override', () => {
+    const registry = createRegistry([toyDriver()]);
+    const calls = [];
+    const logger = { debug: (msg) => calls.push(msg) };
+    registry.resolveDriver('toy', 'ics425', logger);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /ics425/);
+    assert.match(calls[0], /toy/);
+});
+
+test('resolveDriver NO registra en debug cuando el modelo si tiene override', () => {
+    const registry = createRegistry([toyDriver({
+        models: { rare: { framing: { terminator: '\r' } } },
+    })]);
+    const calls = [];
+    const logger = { debug: (msg) => calls.push(msg) };
+    registry.resolveDriver('toy', 'rare', logger);
+    assert.equal(calls.length, 0);
+});
+
+test('resolveDriver sin modelo no registra nada, con o sin logger', () => {
+    const registry = createRegistry([toyDriver()]);
+    const calls = [];
+    const logger = { debug: (msg) => calls.push(msg) };
+    registry.resolveDriver('toy', null, logger);
+    assert.equal(calls.length, 0);
+});
+
 test('una marca desconocida lanza ScaleError unknown_brand con la lista valida', () => {
     const registry = createRegistry([toyDriver()]);
     assert.throws(() => registry.resolveDriver('acme', null), (err) => {
@@ -79,6 +112,37 @@ test('rechaza una operacion declarada a la vez como garantizada y dependiente', 
         () => createRegistry([toyDriver({ capabilities: ['weigh'], deviceDependent: ['weigh'] })]),
         /declarada dos veces: weigh/,
     );
+});
+
+test('rechaza al construir un override de modelo que declara una capacidad sin implementarla', () => {
+    // mergeOverride por si solo no revalida coherencia: un override que
+    // cambiara capabilities sin que el driver implemente lo nuevo declarado
+    // pasaria desapercibido hasta que alguien pidiera ese modelo en
+    // produccion. Debe fallar aqui, en createRegistry, no mas tarde en
+    // resolveDriver ni como un 500 en caliente.
+    assert.throws(
+        () => createRegistry([toyDriver({
+            models: { bogus: { capabilities: ['weigh', 'tare'] } },
+        })]),
+        /declara 'tare' pero no la implementa/,
+    );
+});
+
+test('rechaza al construir un override de modelo que declara una operacion inventada', () => {
+    assert.throws(
+        () => createRegistry([toyDriver({
+            models: { bogus: { capabilities: ['weigh', 'inventada'] } },
+        })]),
+        /operacion desconocida: inventada/,
+    );
+});
+
+test('un override de modelo coherente sigue construyendo sin problemas', () => {
+    assert.doesNotThrow(() => createRegistry([toyDriver({
+        deviceDependent: ['beep'],
+        async beep() {},
+        models: { rare: { framing: { terminator: '\r' } } },
+    })]));
 });
 
 test('deviceDependent tambien exige implementacion', () => {

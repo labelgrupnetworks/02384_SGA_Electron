@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const driver = require('../../src/scales/drivers/bizerba');
-const { buildTelegram } = require('../../src/scales/drivers/bizerba');
+const { buildTelegram, parseWeights } = require('../../src/scales/drivers/bizerba');
 const { TcpLink } = require('../../src/scales/transport');
 const { createLineScale } = require('../helpers/fake-scale');
 
@@ -203,6 +203,38 @@ test('weigh salta los tripletes mal formados y deja el campo a null', async () =
     assert.equal(result.data.gross, null);
 });
 
+// --- I1: exponente invalido en el triplete debe dejar el campo a null, no NaN ---
+
+test('parseWeights deja el campo a null si el exponente no es un entero: "abc"', () => {
+    const weights = parseWeights('GD01|kg;abc;1234');
+    assert.equal(weights.net, null);
+});
+
+test('parseWeights deja el campo a null si el exponente esta vacio', () => {
+    const weights = parseWeights('GD01|kg;;1234');
+    assert.equal(weights.net, null);
+});
+
+test('parseWeights deja el campo a null si el exponente es decimal: "1.5"', () => {
+    const weights = parseWeights('GD01|kg;1.5;1234');
+    assert.equal(weights.net, null);
+});
+
+test('parseWeights acepta un exponente negativo valido', () => {
+    const weights = parseWeights('GD01|kg;-3;1234');
+    assert.deepEqual(weights.net, { value: 1234, unit: 'g' });
+});
+
+test('weigh con exponente ilegible en la trama real deja ese campo a null (no NaN serializado como null por otra via)', async () => {
+    const body = 'I?LV01|RX02|STA7|GD01;GD02;GD07|LX02';
+    const result = await withScale({
+        [`0${ETX}254${ETX}001${ETX}${body}`]: 'I!LV01|GD01|kg;abc;1234|GD02|kg;-3;50|GD07|kg;-3;1284|LX02',
+    }, (link) => driver.weigh(link));
+    assert.equal(result.data.net, null);
+    assert.deepEqual(result.data.tare, { value: 50, unit: 'g' });
+    assert.deepEqual(result.data.gross, { value: 1284, unit: 'g' });
+});
+
 test('weigh sin respuesta es timeout', async () => {
     const body = 'I?LV01|RX02|STA7|GD01;GD02;GD07|LX02';
     await assert.rejects(
@@ -273,4 +305,25 @@ test('un prefijo por options cambia las seis tramas', async () => {
         await driver.tare(link, { options: { addressPrefix: ['9', '100', '007'] } });
         assert.deepEqual(scale.received, [`9${ETX}100${ETX}007${ETX}${body}`]);
     });
+});
+
+// El SGA manda `"options": null` cuando el operador no toco nada (no `{}` ni
+// el campo ausente). Antes esto reventaba con un TypeError dentro de
+// buildTelegram ("Cannot read properties of null") que /scale/* devolvia
+// como 500 en vez de tratar null igual que "usa el prefijo por defecto".
+test('tare con options: null usa el addressPrefix por defecto en vez de fallar', async () => {
+    const body = 'I!GX05';
+    await withScale({
+        [`0${ETX}254${ETX}001${ETX}${body}`]: 'OK',
+    }, async (link, scale) => {
+        await driver.tare(link, { options: null });
+        assert.deepEqual(scale.received, [`0${ETX}254${ETX}001${ETX}${body}`]);
+    });
+});
+
+test('buildTelegram con options: null usa el addressPrefix por defecto', () => {
+    assert.equal(
+        buildTelegram('I!GX05', null),
+        `0${ETX}254${ETX}001${ETX}I!GX05`,
+    );
 });

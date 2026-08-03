@@ -2,7 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const driver = require('../../src/scales/drivers/mettler-toledo');
 const { TcpLink } = require('../../src/scales/transport');
-const { createLineScale } = require('../helpers/fake-scale');
+const { createLineScale, createRawScale } = require('../helpers/fake-scale');
+const { ScaleError } = require('../../src/scales/errors');
 
 async function withScale(table, fn) {
     const scale = await createLineScale(table);
@@ -75,6 +76,52 @@ test('weigh falla como protocol si S contesta algo que no es un peso', async () 
             return true;
         },
     );
+});
+
+test('weigh no atribuye a TA una respuesta S que llega tarde (reproduce C1 de la revision final)', async () => {
+    // Escenario reproducido por el revisor: un equipo que repite su respuesta
+    // "S" (p.ej. dejado en modo streaming SIR/SR) la deja llegar de nuevo justo
+    // despues de que se envie "TA". Sin emparejar la respuesta con el comando
+    // que se pidio, esa "S S 1.234 kg" sobrante se leia como si fuera la
+    // respuesta de TA, dando una tara y un bruto incorrectos con HTTP 200.
+    let buffer = '';
+    const scale = await createRawScale((chunk, socket) => {
+        buffer += chunk.toString('latin1');
+        let index;
+        while ((index = buffer.indexOf('\r\n')) !== -1) {
+            const line = buffer.slice(0, index).trim();
+            buffer = buffer.slice(index + 2);
+            if (!line) continue;
+            const key = line.split(/\s+/)[0];
+            if (key === 'S') {
+                socket.write(Buffer.from('S S 1.234 kg\r\n', 'latin1'));
+            } else if (key === 'TA') {
+                // La "S" sobrante llega dentro de la ventana de lectura de TA,
+                // antes de que llegue la respuesta real de TA.
+                socket.write(Buffer.from('S S 1.234 kg\r\n', 'latin1'));
+                setTimeout(() => {
+                    socket.write(Buffer.from('TA A 0.000 kg\r\n', 'latin1'));
+                }, 20);
+            }
+        }
+    });
+    const link = new TcpLink({
+        host: '127.0.0.1',
+        port: scale.port,
+        framing: { ...driver.framing, quietMs: 80, totalMs: 1200 },
+    });
+    try {
+        await link.connect();
+        const result = await driver.weigh(link);
+        // Verdad: la bascula no tiene tara puesta (TA A 0.000 kg). Sin el fix,
+        // esto salia como tare 1234g y gross 2468g (ver mt-sics-protocol.test.js
+        // para la prueba equivalente y mas directa sobre assertOk).
+        assert.deepEqual(result.data.tare, { value: 0, unit: 'g' });
+        assert.deepEqual(result.data.gross, { value: 1234, unit: 'g' });
+    } finally {
+        link.close();
+        await scale.close();
+    }
 });
 
 test('tare envia T y devuelve la tara resultante', async () => {
@@ -273,6 +320,46 @@ test('guidedWeigh usa SI cuando waitStable es false', async () => {
         const res = await driver.guidedWeigh(link, { waitStable: false });
         assert.deepEqual(scale.received, ['SI', 'TA', 'DW']);
         assert.equal(res.data.stable, false);
+    });
+});
+
+// --- C2: timeoutMs invalido no debe colgar la conexion para siempre ---
+
+function describeBadValue(value) {
+    if (typeof value === 'number' && Number.isNaN(value)) return 'NaN';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    return JSON.stringify(value);
+}
+
+for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
+    const label = describeBadValue(bad);
+    test(`guidedWeigh rechaza timeoutMs=${label} de inmediato, sin colgarse`, async () => {
+        await withScale({
+            S: 'S S 1.234 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+        }, async (link) => {
+            const ceiling = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('no debia colgarse')), 4000);
+            });
+            await assert.rejects(
+                Promise.race([driver.guidedWeigh(link, { timeoutMs: bad }), ceiling]),
+                (err) => {
+                    assert.ok(err instanceof ScaleError, `esperaba ScaleError, recibido: ${err}`);
+                    assert.equal(err.code, 'protocol');
+                    return true;
+                },
+            );
+        });
+    });
+}
+
+test('guidedWeigh acepta el timeoutMs por defecto (10000) sin necesidad de indicarlo', async () => {
+    await withScale({
+        S: 'S S 1.234 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
+    }, async (link, scale) => {
+        const res = await driver.guidedWeigh(link, {});
+        assert.deepEqual(scale.received, ['S', 'TA', 'DW']);
+        assert.equal(res.data.net.value, 1234);
     });
 });
 

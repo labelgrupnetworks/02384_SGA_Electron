@@ -86,9 +86,13 @@ test('varios comandos sobre una sola conexion no se mezclan', async () => {
     }
 });
 
-test('drena la cola de un comando anterior antes de enviar el siguiente', async () => {
-    // La bascula contesta a SIR dos veces: la segunda linea llega tarde y sin
-    // drenado se leeria como respuesta de S.
+test('drena, del lado JS, lo ya llegado y sin consumir de un comando anterior antes de enviar el siguiente', async () => {
+    // La bascula contesta a SIR dos veces: la segunda linea llega y queda en
+    // this.pending ANTES de que se envie S; sin drenado se leeria como
+    // respuesta de S. Esto prueba solo eso -- una linea ya recibida antes del
+    // envio. No prueba (ni lo garantiza _drain) que una linea que llegue
+    // DESPUES del envio de S no pueda colarse como su respuesta: esa garantia
+    // es de assertOk (Critical 1), no de este drenado.
     const scale = await createLineScale({
         SIR: ['S D 0.500 kg', 'S D 0.600 kg'],
         S: 'S S 1.234 kg',
@@ -127,6 +131,66 @@ test('totalMs corta una bascula que no calla nunca', async () => {
         await scale.close();
     }
 });
+
+// --- C2: un quietMs/totalMs no numerico no debe colgar la lectura para siempre ---
+//
+// `Date.now() + total` es concatenacion de string si `total` es `"10000"`, y
+// `NaN`/`Infinity` nunca hacen que `now >= deadline` sea verdad. Antes del fix,
+// cualquiera de estos valores dejaba _readLines reprogramandose con
+// setTimeout(tick, 10) para siempre: la peticion HTTP no contestaba nunca y el
+// socket no se cerraba. El techo de la prueba es generoso pero finito, para
+// que una regresion falle rapido en vez de colgar la suite entera.
+function describeBadValue(value) {
+    if (typeof value === 'number' && Number.isNaN(value)) return 'NaN';
+    if (value === Infinity) return 'Infinity';
+    if (value === -Infinity) return '-Infinity';
+    return JSON.stringify(value);
+}
+
+for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
+    test(`command con totalMs=${describeBadValue(bad)} responde y no cuelga`, async () => {
+        const scale = await createLineScale({ S: null }); // nunca contesta -> fuerza a agotar el plazo
+        const link = linkTo(scale.port);
+        try {
+            await link.connect();
+            const started = Date.now();
+            const lines = await Promise.race([
+                link.command('S', { totalMs: bad }),
+                new Promise((_, reject) => setTimeout(
+                    () => reject(new Error('command() no respondio a tiempo: se colgo')),
+                    4000,
+                )),
+            ]);
+            const elapsed = Date.now() - started;
+            assert.deepEqual(lines, []);
+            assert.ok(elapsed < 4000, `tardo ${elapsed}ms`);
+        } finally {
+            link.close();
+            await scale.close();
+        }
+    });
+}
+
+for (const bad of ['80', NaN, Infinity, 0, -50, {}]) {
+    test(`command con quietMs=${describeBadValue(bad)} responde y no cuelga`, async () => {
+        const scale = await createLineScale({ S: 'S S 1.000 kg' });
+        const link = linkTo(scale.port);
+        try {
+            await link.connect();
+            const lines = await Promise.race([
+                link.command('S', { quietMs: bad, totalMs: 1500 }),
+                new Promise((_, reject) => setTimeout(
+                    () => reject(new Error('command() no respondio a tiempo: se colgo')),
+                    4000,
+                )),
+            ]);
+            assert.deepEqual(lines, ['S S 1.000 kg']);
+        } finally {
+            link.close();
+            await scale.close();
+        }
+    });
+}
 
 test('connect contra un puerto cerrado lanza ScaleError connect', async () => {
     const link = linkTo(1);

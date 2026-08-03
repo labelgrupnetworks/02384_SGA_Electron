@@ -26,6 +26,36 @@ function normalizeError(error) {
     return { code: 'protocol', message: safeMessage(error), detail: null };
 }
 
+// `ip` llega del body HTTP: no hay garantia de que sea un string, y mucho
+// menos uno no vacio. Un objeto/array pasa la comprobacion de verdad (`{}` y
+// `[]` son truthy) y se cuela hasta `net.connect(port, options)`, que tiene
+// una sobrecarga donde el segundo argumento son opciones: con `ip: {}` el
+// socket ignora silenciosamente el host pedido y conecta a localhost en vez
+// de fallar, lo que en un piso de produccion significa hablar con la bascula
+// equivocada (o con ninguna) sin ningun error que lo delate.
+function isValidIp(ip) {
+    return typeof ip === 'string' && ip.trim().length > 0;
+}
+
+// El puerto puede llegar como number o como string numerico (el JSON del SGA
+// no siempre tipa igual sus campos), pero en ambos casos tiene que ser un
+// entero entre 1 y 65535: `Number("abc")` es NaN y antes se colaba hasta
+// `new TcpLink({ port: NaN })`, y algo como 99999 o 0 no son puertos TCP
+// validos aunque `Number(port)` no de NaN. Sin esto el fallo era un error
+// crudo de Node (ECONNREFUSED contra un puerto sin sentido, o similar) que
+// llegaba como 500 en vez del 400 que le corresponde a una peticion mal
+// formada.
+function isValidPort(port) {
+    if (typeof port === 'number') {
+        return Number.isInteger(port) && port >= 1 && port <= 65535;
+    }
+    if (typeof port === 'string' && /^\d+$/.test(port)) {
+        const n = Number(port);
+        return n >= 1 && n <= 65535;
+    }
+    return false;
+}
+
 function fail(res, { brand = null, model = null, op, error }) {
     const { code, message, detail } = normalizeError(error);
     return res.status(httpStatusFor(code)).json({
@@ -52,9 +82,26 @@ async function runOperation(operation, req, res, logger) {
         });
     }
 
+    // Estan presentes, pero eso no dice que tengan una forma usable: un `ip`
+    // que no sea un string no vacio, o un `port` fuera de 1-65535, pasan la
+    // comprobacion de arriba (son truthy) y llegarian sin mas control hasta
+    // TcpLink/net.connect.
+    if (!isValidIp(ip) || !isValidPort(port)) {
+        return fail(res, {
+            brand,
+            model,
+            op: operation,
+            error: new ScaleError(
+                'missing_params',
+                'ip debe ser un string no vacío y port un entero entre 1 y 65535',
+                { ip, port },
+            ),
+        });
+    }
+
     let driver;
     try {
-        driver = registry.resolveDriver(brand, model);
+        driver = registry.resolveDriver(brand, model, logger);
     } catch (error) {
         return fail(res, { brand, model, op: operation, error });
     }
