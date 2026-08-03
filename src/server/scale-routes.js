@@ -2,18 +2,25 @@ const { registry, OPERATIONS, routePathFor } = require('../scales');
 const { TcpLink } = require('../scales/transport');
 const { ScaleError, httpStatusFor } = require('../scales/errors');
 
+// Normaliza cualquier valor lanzado (no solo instancias de Error) a
+// {code, message, detail}. Un driver o dependencia puede lanzar `null`, un
+// string o un objeto plano, y el contrato {code, message, detail} de la
+// respuesta no puede depender de que quien lanzo haya usado un Error.
+function normalizeError(error) {
+    if (error instanceof ScaleError) {
+        return { code: error.code, message: error.message, detail: error.detail };
+    }
+    return { code: 'protocol', message: String(error?.message ?? error), detail: null };
+}
+
 function fail(res, { brand = null, model = null, op, error }) {
-    const code = error instanceof ScaleError ? error.code : 'protocol';
+    const { code, message, detail } = normalizeError(error);
     return res.status(httpStatusFor(code)).json({
         success: false,
         brand,
         model,
         op,
-        error: {
-            code,
-            message: error.message,
-            detail: error instanceof ScaleError ? error.detail : null,
-        },
+        error: { code, message, detail },
     });
 }
 
@@ -21,16 +28,14 @@ async function runOperation(operation, req, res, logger) {
     const { ip, port, brand, model = null } = req.body || {};
 
     if (!ip || !port || !brand) {
-        return res.status(400).json({
-            success: false,
+        return fail(res, {
             brand: brand || null,
             model,
             op: operation,
-            error: {
-                code: 'unknown_brand',
-                message: 'Faltan parámetros requeridos: ip, port, brand',
-                detail: null,
-            },
+            error: new ScaleError(
+                'missing_params',
+                'Faltan parámetros requeridos: ip, port, brand',
+            ),
         });
     }
 
@@ -68,7 +73,8 @@ async function runOperation(operation, req, res, logger) {
             raw: result.raw,
         });
     } catch (error) {
-        logger.warn(`⚠️ [${operation}] ${error.code || 'error'}: ${error.message}`);
+        const { code, message } = normalizeError(error);
+        logger.warn(`⚠️ [${operation}] ${code}: ${message}`);
         return fail(res, { brand, model, op: operation, error });
     } finally {
         link.close();

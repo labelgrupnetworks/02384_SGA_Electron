@@ -16,6 +16,7 @@ test('ScaleError rechaza un code que no esta en la lista', () => {
 
 test('cada code mapea a su estado HTTP', () => {
     assert.equal(httpStatusFor('unknown_brand'), 400);
+    assert.equal(httpStatusFor('missing_params'), 400);
     assert.equal(httpStatusFor('not_supported'), 501);
     assert.equal(httpStatusFor('connect'), 502);
     assert.equal(httpStatusFor('timeout'), 504);
@@ -26,6 +27,7 @@ test('cada code mapea a su estado HTTP', () => {
 test('cada code declarado mapea exactamente a su status esperado', () => {
     const expectedStatuses = {
         unknown_brand: 400,
+        missing_params: 400,
         not_supported: 501,
         connect: 502,
         timeout: 504,

@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { registerScaleRoutes } = require('../src/server/scale-routes');
+const { registry } = require('../src/scales');
 const { createLineScale } = require('./helpers/fake-scale');
 
 const silentLogger = { info() {}, warn() {}, error() {}, log() {} };
@@ -62,7 +63,7 @@ test('GET /scale/brands devuelve el catalogo con capacidades y modelos', async (
     }
 });
 
-test('faltar ip, port o brand es 400', async () => {
+test('faltar ip, port o brand es 400 missing_params, no unknown_brand', async () => {
     const app = await startApp();
     try {
         for (const body of [
@@ -72,7 +73,12 @@ test('faltar ip, port o brand es 400', async () => {
         ]) {
             const res = await post(app.base, '/scale/weigh', body);
             assert.equal(res.status, 400, JSON.stringify(body));
-            assert.equal((await res.json()).success, false);
+            const responseBody = await res.json();
+            assert.equal(responseBody.success, false);
+            // "falta ip/port/brand" no es lo mismo que "esa marca no existe": el SGA
+            // rama sobre este code, y confundirlo con unknown_brand apunta a quien
+            // depura hacia el sitio equivocado.
+            assert.equal(responseBody.error.code, 'missing_params', JSON.stringify(body));
         }
     } finally {
         await app.close();
@@ -201,6 +207,10 @@ test('select-platform pasa el numero al driver', async () => {
         });
         assert.equal(res.status, 200);
         assert.equal((await res.json()).data.platform, 2);
+        // La tabla del fake solo indexa por la primera palabra ("SNS"), asi que
+        // el assert de arriba pasaria incluso si el driver siempre mandara "SNS 1":
+        // el numero solicitado tiene que llegar de verdad al cable.
+        assert.deepEqual(scale.received, ['SNS 2']);
     } finally {
         await app.close();
         await scale.close();
@@ -260,6 +270,90 @@ test('guided-weigh funciona de punta a punta y restaura el display', async () =>
         await app.close();
         await scale.close();
     }
+});
+
+// El registro real (`registry` de '../src/scales') se parchea temporalmente
+// con una marca falsa cuyo driver lanza un valor concreto (no necesariamente
+// un Error), para probar que el envelope de error se mantiene sin tocar
+// ningun driver real. La conexion TCP sigue siendo real (una fake-scale que
+// no hace falta que conteste nada, porque el driver falso lanza antes de
+// tocar el link) para no saltarse el connect() real de la ruta.
+async function withThrowingDriver(thrownValue, run) {
+    const originalResolveDriver = registry.resolveDriver;
+    const originalAllOperations = registry.allOperations;
+    const fakeDriver = {
+        id: 'fake_thrower',
+        framing: {},
+        async weigh() {
+            throw thrownValue;
+        },
+    };
+    registry.resolveDriver = (brand, model) => (
+        brand === 'fake_thrower' ? fakeDriver : originalResolveDriver(brand, model)
+    );
+    registry.allOperations = (driver) => (
+        driver === fakeDriver ? ['weigh'] : originalAllOperations(driver)
+    );
+
+    const scale = await createLineScale({});
+    const app = await startApp();
+    try {
+        await run({ app, scale });
+    } finally {
+        registry.resolveDriver = originalResolveDriver;
+        registry.allOperations = originalAllOperations;
+        await app.close();
+        await scale.close();
+    }
+}
+
+test('un driver que lanza null no rompe el envelope de error', async () => {
+    await withThrowingDriver(null, async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.equal(body.error.detail, null);
+    });
+});
+
+test('un driver que lanza un string no pierde el mensaje', async () => {
+    await withThrowingDriver('la bascula exploto', async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.equal(body.error.message, 'la bascula exploto');
+    });
+});
+
+test('un driver que lanza un objeto plano no rompe el envelope de error', async () => {
+    await withThrowingDriver({ reason: 'inesperado' }, async ({ app, scale }) => {
+        const res = await post(app.base, '/scale/weigh', {
+            ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
+        });
+        assert.equal(res.status, 500);
+        const body = await res.json();
+        assert.equal(body.success, false);
+        assert.equal(body.brand, 'fake_thrower');
+        assert.equal(body.model, null);
+        assert.equal(body.op, 'weigh');
+        assert.equal(body.error.code, 'protocol');
+        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+    });
 });
 
 test('todas las operaciones del registro tienen ruta montada', async () => {
