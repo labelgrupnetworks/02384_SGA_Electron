@@ -28,7 +28,7 @@ function post(base, path, body) {
     });
 }
 
-test('GET /health anuncia version y APIs disponibles', async () => {
+test('GET /health announces the version and available APIs', async () => {
     const app = await startApp();
     try {
         const res = await fetch(`${app.base}/health`);
@@ -42,7 +42,7 @@ test('GET /health anuncia version y APIs disponibles', async () => {
     }
 });
 
-test('GET /scale/brands devuelve el catalogo con capacidades y modelos', async () => {
+test('GET /scale/brands returns the catalog with capabilities and models', async () => {
     const app = await startApp();
     try {
         const body = await (await fetch(`${app.base}/scale/brands`)).json();
@@ -54,16 +54,16 @@ test('GET /scale/brands devuelve el catalogo con capacidades y modelos', async (
         const bizerba = body.brands.find((b) => b.id === 'bizerba');
         assert.equal(bizerba.defaultPort, 10051);
         assert.ok(!bizerba.capabilities.includes('zero'));
-        // Ningun driver declara overrides de modelo hoy: el catalogo de modelos del
-        // SGA es a proposito mas amplio que esta tabla, que solo lista lo que se
-        // desvia del protocolo base.
+        // No driver declares model overrides today: the SGA's model catalog is
+        // deliberately broader than this table, which only lists what deviates
+        // from the base protocol.
         assert.deepEqual(bizerba.models, []);
     } finally {
         await app.close();
     }
 });
 
-test('faltar ip, port o brand es 400 missing_params, no unknown_brand', async () => {
+test('missing ip, port or brand is 400 missing_params, not unknown_brand', async () => {
     const app = await startApp();
     try {
         for (const body of [
@@ -75,9 +75,9 @@ test('faltar ip, port o brand es 400 missing_params, no unknown_brand', async ()
             assert.equal(res.status, 400, JSON.stringify(body));
             const responseBody = await res.json();
             assert.equal(responseBody.success, false);
-            // "falta ip/port/brand" no es lo mismo que "esa marca no existe": el SGA
-            // rama sobre este code, y confundirlo con unknown_brand apunta a quien
-            // depura hacia el sitio equivocado.
+            // "missing ip/port/brand" is not the same as "that brand does not exist":
+            // the SGA branches on this code, and confusing it with unknown_brand
+            // points whoever is debugging to the wrong place.
             assert.equal(responseBody.error.code, 'missing_params', JSON.stringify(body));
         }
     } finally {
@@ -85,7 +85,7 @@ test('faltar ip, port o brand es 400 missing_params, no unknown_brand', async ()
     }
 });
 
-test('un ip con forma invalida es 400 missing_params, no 500 ni conexion a localhost', async () => {
+test('a malformed ip is 400 missing_params, not 500 nor a connection to localhost', async () => {
     const app = await startApp();
     try {
         for (const ip of [{}, [], 123, true, '']) {
@@ -100,7 +100,7 @@ test('un ip con forma invalida es 400 missing_params, no 500 ni conexion a local
     }
 });
 
-test('un port con forma invalida es 400 missing_params, no un error crudo de Node', async () => {
+test('a malformed port is 400 missing_params, not a raw Node error', async () => {
     const app = await startApp();
     try {
         for (const port of ['abc', 0, 99999, -1, 1.5, {}, null]) {
@@ -115,7 +115,7 @@ test('un port con forma invalida es 400 missing_params, no un error crudo de Nod
     }
 });
 
-test('un port valido como string numerico se acepta igual que un port numerico', async () => {
+test('a valid port as a numeric string is accepted the same as a numeric port', async () => {
     const app = await startApp();
     const scale = await createLineScale({ S: 'S S 1.234 kg', TA: 'TA A 0.000 kg' });
     try {
@@ -129,7 +129,7 @@ test('un port valido como string numerico se acepta igual que un port numerico',
     }
 });
 
-test('una marca desconocida es 400 unknown_brand con la lista valida', async () => {
+test('an unknown brand is 400 unknown_brand with the list of valid ones', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale/weigh', {
@@ -144,15 +144,15 @@ test('una marca desconocida es 400 unknown_brand con la lista valida', async () 
     }
 });
 
-test('una operacion que la marca no soporta es 501 sin abrir socket', async () => {
+test('an operation the brand does not support is 501 without opening a socket', async () => {
     const app = await startApp();
     try {
-        // Puerto 1 esta cerrado: si respondiera 502 significaria que intento conectar.
+        // Port 1 is closed: if it answered 502 it would mean it tried to connect.
         for (const op of ['zero', 'display', 'beep', 'guided-weigh']) {
             const res = await post(app.base, `/scale/${op}`, {
                 ip: '127.0.0.1', port: 1, brand: 'bizerba', text: 'X',
             });
-            assert.equal(res.status, 501, `${op} deberia ser 501`);
+            assert.equal(res.status, 501, `${op} should be 501`);
             const body = await res.json();
             assert.equal(body.error.code, 'not_supported');
             assert.equal(body.brand, 'bizerba');
@@ -162,7 +162,7 @@ test('una operacion que la marca no soporta es 501 sin abrir socket', async () =
     }
 });
 
-test('weigh devuelve el sobre normalizado con data y raw', async () => {
+test('weigh returns the normalised envelope with data and raw', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg', TA: 'TA A 0.050 kg' });
     const app = await startApp();
     try {
@@ -184,7 +184,7 @@ test('weigh devuelve el sobre normalizado con data y raw', async () => {
     }
 });
 
-test('un puerto cerrado es 502 connect', async () => {
+test('a closed port is 502 connect', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale/weigh', {
@@ -197,7 +197,7 @@ test('un puerto cerrado es 502 connect', async () => {
     }
 });
 
-test('una bascula muda es 504 timeout', async () => {
+test('a silent scale is 504 timeout', async () => {
     const scale = await createLineScale({ S: null });
     const app = await startApp();
     try {
@@ -212,8 +212,8 @@ test('una bascula muda es 504 timeout', async () => {
     }
 });
 
-test('un ES del equipo llega como 501, no como 500', async () => {
-    const scale = await createLineScale({ S: 'S S 0.000 kg' });  // DS contesta ES
+test('an ES from the device arrives as 501, not as 500', async () => {
+    const scale = await createLineScale({ S: 'S S 0.000 kg' });  // DS answers ES
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale/beep', {
@@ -227,7 +227,7 @@ test('un ES del equipo llega como 501, no como 500', async () => {
     }
 });
 
-test('display pasa el texto al driver', async () => {
+test('display passes the text to the driver', async () => {
     const scale = await createLineScale({ D: 'D A' });
     const app = await startApp();
     try {
@@ -242,7 +242,7 @@ test('display pasa el texto al driver', async () => {
     }
 });
 
-test('select-platform pasa el numero al driver', async () => {
+test('select-platform passes the number to the driver', async () => {
     const scale = await createLineScale({ SNS: 'SNS A 2' });
     const app = await startApp();
     try {
@@ -251,9 +251,9 @@ test('select-platform pasa el numero al driver', async () => {
         });
         assert.equal(res.status, 200);
         assert.equal((await res.json()).data.platform, 2);
-        // La tabla del fake solo indexa por la primera palabra ("SNS"), asi que
-        // el assert de arriba pasaria incluso si el driver siempre mandara "SNS 1":
-        // el numero solicitado tiene que llegar de verdad al cable.
+        // The fake's table only indexes by the first word ("SNS"), so the assert
+        // above would pass even if the driver always sent "SNS 1": the requested
+        // number actually has to reach the wire.
         assert.deepEqual(scale.received, ['SNS 2']);
     } finally {
         await app.close();
@@ -261,11 +261,11 @@ test('select-platform pasa el numero al driver', async () => {
     }
 });
 
-test('el model se propaga a la respuesta y no rompe la operacion', async () => {
-    // Ningun driver declara overrides de modelo hoy (ver el comentario de models
-    // en bizerba.js), asi que un model cualquiera debe caer a la linea base y
-    // funcionar igual. Lo que se comprueba aqui es que el model viaja de vuelta,
-    // que es lo que el SGA necesita para saber con que configuracion se hablo.
+test('the model propagates to the response and does not break the operation', async () => {
+    // No driver declares model overrides today (see the models comment in
+    // bizerba.js), so any model should fall back to the baseline and work the
+    // same. What is being checked here is that the model travels back, which
+    // is what the SGA needs to know which configuration it talked to.
     const scale = await createLineScale({ [`0\x03254\x03001\x03I!GX05`]: 'OK' });
     const app = await startApp();
     try {
@@ -280,7 +280,7 @@ test('el model se propaga a la respuesta y no rompe la operacion', async () => {
     }
 });
 
-test('un model sin override funciona con la linea base', async () => {
+test('a model without an override works with the baseline', async () => {
     const scale = await createLineScale({ S: 'S S 1.000 kg', TA: 'TA A 0.000 kg' });
     const app = await startApp();
     try {
@@ -295,7 +295,7 @@ test('un model sin override funciona con la linea base', async () => {
     }
 });
 
-test('guided-weigh funciona de punta a punta y restaura el display', async () => {
+test('guided-weigh works end to end and restores the display', async () => {
     const scale = await createLineScale({
         D: 'D A', DS: 'DS A', S: 'S S 2.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     });
@@ -316,12 +316,12 @@ test('guided-weigh funciona de punta a punta y restaura el display', async () =>
     }
 });
 
-// El registro real (`registry` de '../src/scales') se parchea temporalmente
-// con una marca falsa cuyo driver lanza un valor concreto (no necesariamente
-// un Error), para probar que el envelope de error se mantiene sin tocar
-// ningun driver real. La conexion TCP sigue siendo real (una fake-scale que
-// no hace falta que conteste nada, porque el driver falso lanza antes de
-// tocar el link) para no saltarse el connect() real de la ruta.
+// The real registry (`registry` from '../src/scales') is temporarily patched
+// with a fake brand whose driver throws a specific value (not necessarily
+// an Error), to prove that the error envelope holds up without touching any
+// real driver. The TCP connection stays real (a fake-scale that doesn't need
+// to answer anything, because the fake driver throws before touching the
+// link) so as not to skip over the route's real connect().
 async function withThrowingDriver(thrownValue, run) {
     const originalResolveDriver = registry.resolveDriver;
     const originalAllOperations = registry.allOperations;
@@ -351,7 +351,7 @@ async function withThrowingDriver(thrownValue, run) {
     }
 }
 
-test('un driver que lanza null no rompe el envelope de error', async () => {
+test('a driver that throws null does not break the error envelope', async () => {
     await withThrowingDriver(null, async ({ app, scale }) => {
         const res = await post(app.base, '/scale/weigh', {
             ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
@@ -363,12 +363,12 @@ test('un driver que lanza null no rompe el envelope de error', async () => {
         assert.equal(body.model, null);
         assert.equal(body.op, 'weigh');
         assert.equal(body.error.code, 'protocol');
-        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.ok(body.error.message.length > 0, 'the message should not end up empty');
         assert.equal(body.error.detail, null);
     });
 });
 
-test('un driver que lanza un string no pierde el mensaje', async () => {
+test('a driver that throws a string does not lose the message', async () => {
     await withThrowingDriver('la bascula exploto', async ({ app, scale }) => {
         const res = await post(app.base, '/scale/weigh', {
             ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
@@ -384,7 +384,7 @@ test('un driver que lanza un string no pierde el mensaje', async () => {
     });
 });
 
-test('un driver que lanza un objeto plano no rompe el envelope de error', async () => {
+test('a driver that throws a plain object does not break the error envelope', async () => {
     await withThrowingDriver({ reason: 'inesperado' }, async ({ app, scale }) => {
         const res = await post(app.base, '/scale/weigh', {
             ip: '127.0.0.1', port: scale.port, brand: 'fake_thrower',
@@ -396,15 +396,15 @@ test('un driver que lanza un objeto plano no rompe el envelope de error', async 
         assert.equal(body.model, null);
         assert.equal(body.op, 'weigh');
         assert.equal(body.error.code, 'protocol');
-        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.ok(body.error.message.length > 0, 'the message should not end up empty');
     });
 });
 
-test('un driver que lanza un objeto cuyo getter de message lanza no rompe el envelope', async () => {
-    // El primer round de esta correccion normalizaba con
-    // `String(error?.message ?? error)`, que sigue lanzando si LEER
-    // `error.message` lanza. Este es justo ese caso: un getter de message
-    // que explota al leerlo, no un message ausente.
+test('a driver that throws an object whose message getter throws does not break the envelope', async () => {
+    // The first round of this fix normalised with
+    // `String(error?.message ?? error)`, which still throws if READING
+    // `error.message` throws. This is exactly that case: a message getter
+    // that blows up when read, not an absent message.
     const thrown = {
         get message() {
             throw new Error('el getter de message tambien exploto');
@@ -421,13 +421,14 @@ test('un driver que lanza un objeto cuyo getter de message lanza no rompe el env
         assert.equal(body.model, null);
         assert.equal(body.op, 'weigh');
         assert.equal(body.error.code, 'protocol');
-        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.ok(body.error.message.length > 0, 'the message should not end up empty');
     });
 });
 
-test('un driver que lanza un objeto cuyo toString lanza no rompe el envelope', async () => {
-    // Sin `.message`, `String(error)` cae a `toString()`. Si ese `toString`
-    // tambien lanza, la misma clase de fallo aparece por una puerta distinta.
+test('a driver that throws an object whose toString throws does not break the envelope', async () => {
+    // Without `.message`, `String(error)` falls back to `toString()`. If that
+    // `toString` also throws, the same kind of failure shows up through a
+    // different door.
     const thrown = {
         toString() {
             throw new Error('el toString tambien exploto');
@@ -444,15 +445,15 @@ test('un driver que lanza un objeto cuyo toString lanza no rompe el envelope', a
         assert.equal(body.model, null);
         assert.equal(body.op, 'weigh');
         assert.equal(body.error.code, 'protocol');
-        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.ok(body.error.message.length > 0, 'the message should not end up empty');
     });
 });
 
-test('un driver que lanza un objeto sin prototipo (sin toString) no rompe el envelope', async () => {
-    // Object.create(null) no tiene ni toString ni valueOf: String(objeto) no
-    // tiene ningun metodo al que recurrir y lanza "Cannot convert object to
-    // primitive value". Es otra forma de que la derivacion del mensaje pueda
-    // lanzar sin que nadie haya escrito un toString malicioso a proposito.
+test('a driver that throws an object with no prototype (no toString) does not break the envelope', async () => {
+    // Object.create(null) has neither toString nor valueOf: String(object) has
+    // no method to fall back on and throws "Cannot convert object to primitive
+    // value". This is another way the message derivation can throw without
+    // anyone having deliberately written a malicious toString.
     const thrown = Object.create(null);
     await withThrowingDriver(thrown, async ({ app, scale }) => {
         const res = await post(app.base, '/scale/weigh', {
@@ -465,17 +466,17 @@ test('un driver que lanza un objeto sin prototipo (sin toString) no rompe el env
         assert.equal(body.model, null);
         assert.equal(body.op, 'weigh');
         assert.equal(body.error.code, 'protocol');
-        assert.ok(body.error.message.length > 0, 'el mensaje no deberia quedar vacio');
+        assert.ok(body.error.message.length > 0, 'the message should not end up empty');
     });
 });
 
-test('todas las operaciones del registro tienen ruta montada', async () => {
+test('all operations in the registry have a mounted route', async () => {
     const { OPERATIONS, routePathFor } = require('../src/scales');
     const app = await startApp();
     try {
         for (const op of OPERATIONS) {
             const res = await post(app.base, `/scale/${routePathFor(op)}`, {});
-            assert.notEqual(res.status, 404, `${op} no tiene ruta`);
+            assert.notEqual(res.status, 404, `${op} has no route`);
         }
     } finally {
         await app.close();

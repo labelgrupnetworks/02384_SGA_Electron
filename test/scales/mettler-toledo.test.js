@@ -21,18 +21,18 @@ async function withScale(table, fn) {
     }
 }
 
-test('el driver se identifica con el id que usa el SGA', () => {
+test('the driver identifies itself with the id the SGA uses', () => {
     assert.equal(driver.id, 'mettler_toledo');
     assert.equal(driver.defaultPort, 4305);
 });
 
-test('beep y selectPlatform son dependientes del equipo, no garantizadas', () => {
+test('beep and selectPlatform are device-dependent, not guaranteed', () => {
     assert.deepEqual(driver.deviceDependent.sort(), ['beep', 'selectPlatform']);
     assert.ok(!driver.capabilities.includes('beep'));
     assert.ok(!driver.capabilities.includes('selectPlatform'));
 });
 
-test('weigh pide S y TA, y calcula el bruto', async () => {
+test('weigh asks for S and TA, and computes the gross', async () => {
     const result = await withScale({
         S: 'S S 1.234 kg',
         TA: 'TA A 0.050 kg',
@@ -49,7 +49,7 @@ test('weigh pide S y TA, y calcula el bruto', async () => {
     assert.deepEqual(result.raw, ['S S 1.234 kg', 'TA A 0.050 kg']);
 });
 
-test('weigh marca stable false con estado D', async () => {
+test('weigh marks stable false with status D', async () => {
     const result = await withScale({
         S: 'S D 0.700 kg',
         TA: 'TA A 0.000 kg',
@@ -58,7 +58,7 @@ test('weigh marca stable false con estado D', async () => {
     assert.deepEqual(result.data.gross, { value: 700, unit: 'g' });
 });
 
-test('weigh propaga la sobrecarga', async () => {
+test('weigh propagates the overload', async () => {
     await assert.rejects(
         () => withScale({ S: 'S +' }, (link) => driver.weigh(link)),
         (err) => {
@@ -68,7 +68,7 @@ test('weigh propaga la sobrecarga', async () => {
     );
 });
 
-test('weigh falla como protocol si S contesta algo que no es un peso', async () => {
+test('weigh fails as protocol if S answers something that is not a weight', async () => {
     await assert.rejects(
         () => withScale({ S: 'S A' }, (link) => driver.weigh(link)),
         (err) => {
@@ -78,12 +78,12 @@ test('weigh falla como protocol si S contesta algo que no es un peso', async () 
     );
 });
 
-test('weigh no atribuye a TA una respuesta S que llega tarde (reproduce C1 de la revision final)', async () => {
-    // Escenario reproducido por el revisor: un equipo que repite su respuesta
-    // "S" (p.ej. dejado en modo streaming SIR/SR) la deja llegar de nuevo justo
-    // despues de que se envie "TA". Sin emparejar la respuesta con el comando
-    // que se pidio, esa "S S 1.234 kg" sobrante se leia como si fuera la
-    // respuesta de TA, dando una tara y un bruto incorrectos con HTTP 200.
+test('weigh does not attribute to TA a late-arriving S response (reproduces C1 from the final review)', async () => {
+    // Scenario reproduced by the reviewer: a device that repeats its "S"
+    // response (e.g. left in SIR/SR streaming mode) lets it arrive again right
+    // after "TA" is sent. Without matching the response to the command that
+    // was requested, that leftover "S S 1.234 kg" was read as if it were TA's
+    // response, giving an incorrect tare and gross with HTTP 200.
     let buffer = '';
     const scale = await createRawScale((chunk, socket) => {
         buffer += chunk.toString('latin1');
@@ -96,8 +96,8 @@ test('weigh no atribuye a TA una respuesta S que llega tarde (reproduce C1 de la
             if (key === 'S') {
                 socket.write(Buffer.from('S S 1.234 kg\r\n', 'latin1'));
             } else if (key === 'TA') {
-                // La "S" sobrante llega dentro de la ventana de lectura de TA,
-                // antes de que llegue la respuesta real de TA.
+                // The leftover "S" arrives within TA's read window, before TA's
+                // real response arrives.
                 socket.write(Buffer.from('S S 1.234 kg\r\n', 'latin1'));
                 setTimeout(() => {
                     socket.write(Buffer.from('TA A 0.000 kg\r\n', 'latin1'));
@@ -113,9 +113,9 @@ test('weigh no atribuye a TA una respuesta S que llega tarde (reproduce C1 de la
     try {
         await link.connect();
         const result = await driver.weigh(link);
-        // Verdad: la bascula no tiene tara puesta (TA A 0.000 kg). Sin el fix,
-        // esto salia como tare 1234g y gross 2468g (ver mt-sics-protocol.test.js
-        // para la prueba equivalente y mas directa sobre assertOk).
+        // Truth: the scale has no tare set (TA A 0.000 kg). Without the fix,
+        // this came out as tare 1234g and gross 2468g (see mt-sics-protocol.test.js
+        // for the equivalent and more direct test on assertOk).
         assert.deepEqual(result.data.tare, { value: 0, unit: 'g' });
         assert.deepEqual(result.data.gross, { value: 1234, unit: 'g' });
     } finally {
@@ -124,7 +124,7 @@ test('weigh no atribuye a TA una respuesta S que llega tarde (reproduce C1 de la
     }
 });
 
-test('tare envia T y devuelve la tara resultante', async () => {
+test('tare sends T and returns the resulting tare', async () => {
     const result = await withScale({ T: 'T S 0.230 kg' }, async (link, scale) => {
         const res = await driver.tare(link);
         assert.deepEqual(scale.received, ['T']);
@@ -133,7 +133,7 @@ test('tare envia T y devuelve la tara resultante', async () => {
     assert.deepEqual(result.data.tare, { value: 230, unit: 'g' });
 });
 
-test('clearTare envia TAC', async () => {
+test('clearTare sends TAC', async () => {
     await withScale({ TAC: 'TAC A' }, async (link, scale) => {
         const res = await driver.clearTare(link);
         assert.deepEqual(scale.received, ['TAC']);
@@ -141,14 +141,14 @@ test('clearTare envia TAC', async () => {
     });
 });
 
-test('zero envia Z', async () => {
+test('zero sends Z', async () => {
     await withScale({ Z: 'Z A' }, async (link, scale) => {
         await driver.zero(link);
         assert.deepEqual(scale.received, ['Z']);
     });
 });
 
-test('info separa modelo y capacidad de I2, y lee el numero de serie de I4', async () => {
+test('info splits model and capacity from I2, and reads the serial number from I4', async () => {
     const result = await withScale({
         I2: 'I2 A "ICS425-BW 3.0045 kg"',
         I4: 'I4 A "C614409345"',
@@ -162,21 +162,21 @@ test('info separa modelo y capacidad de I2, y lee el numero de serie de I4', asy
     assert.equal(result.data.serial, 'C614409345');
 });
 
-test('display envia el texto entre comillas', async () => {
+test('display sends the text in quotes', async () => {
     await withScale({ D: 'D A' }, async (link, scale) => {
         await driver.display(link, { text: 'PESAR BIDON 3' });
         assert.deepEqual(scale.received, ['D "PESAR BIDON 3"']);
     });
 });
 
-test('display quita las comillas dobles del texto para no romper la trama', async () => {
+test('display strips double quotes from the text so it does not break the telegram', async () => {
     await withScale({ D: 'D A' }, async (link, scale) => {
         await driver.display(link, { text: 'DI "HOLA"' });
         assert.deepEqual(scale.received, ['D "DI HOLA"']);
     });
 });
 
-test('display rechaza un texto vacio antes de tocar la red', async () => {
+test('display rejects empty text before touching the network', async () => {
     await assert.rejects(
         () => withScale({ D: 'D A' }, (link) => driver.display(link, { text: '' })),
         (err) => {
@@ -186,7 +186,7 @@ test('display rechaza un texto vacio antes de tocar la red', async () => {
     );
 });
 
-test('display no permite inyectar un comando adicional via \\r\\n', async () => {
+test('display does not allow injecting an additional command via \\r\\n', async () => {
     await withScale({ D: 'D A' }, async (link, scale) => {
         await driver.display(link, { text: 'HOLA"\r\nDS "X' });
         assert.equal(scale.received.length, 1);
@@ -194,14 +194,14 @@ test('display no permite inyectar un comando adicional via \\r\\n', async () => 
     });
 });
 
-test('display no deja pasar un comando destructivo inyectado como RST', async () => {
+test('display does not let through a destructive command injected as RST', async () => {
     await withScale({ D: 'D A' }, async (link, scale) => {
         await driver.display(link, { text: 'X"\r\nRST\r\nD "Y' });
         assert.ok(!scale.received.some((line) => line.trim().split(/\s+/)[0] === 'RST'));
     });
 });
 
-test('display rechaza un texto que solo tiene comillas, tras limpiarlas queda vacio', async () => {
+test('display rejects a text that only has quotes, which is empty after cleaning', async () => {
     await assert.rejects(
         () => withScale({ D: 'D A' }, (link) => driver.display(link, { text: '"""' })),
         (err) => {
@@ -211,22 +211,22 @@ test('display rechaza un texto que solo tiene comillas, tras limpiarlas queda va
     );
 });
 
-test('displayClear envia DW', async () => {
+test('displayClear sends DW', async () => {
     await withScale({ DW: 'DW A' }, async (link, scale) => {
         await driver.displayClear(link);
         assert.deepEqual(scale.received, ['DW']);
     });
 });
 
-test('beep envia DS', async () => {
+test('beep sends DS', async () => {
     await withScale({ DS: 'DS A' }, async (link, scale) => {
         await driver.beep(link);
         assert.deepEqual(scale.received, ['DS']);
     });
 });
 
-test('beep en un equipo sin zumbador da not_supported', async () => {
-    // La bascula falsa contesta ES a lo que no esta en la tabla, igual que una real.
+test('beep on a device without a buzzer gives not_supported', async () => {
+    // The fake scale answers ES to whatever is not in the table, just like a real one.
     await assert.rejects(
         () => withScale({ S: 'S S 0.000 kg' }, (link) => driver.beep(link)),
         (err) => {
@@ -236,7 +236,7 @@ test('beep en un equipo sin zumbador da not_supported', async () => {
     );
 });
 
-test('selectPlatform envia SNS con el numero', async () => {
+test('selectPlatform sends SNS with the number', async () => {
     await withScale({ SNS: 'SNS A 2' }, async (link, scale) => {
         const res = await driver.selectPlatform(link, { platform: 2 });
         assert.deepEqual(scale.received, ['SNS 2']);
@@ -244,7 +244,7 @@ test('selectPlatform envia SNS con el numero', async () => {
     });
 });
 
-test('selectPlatform rechaza un numero que no es 1 ni 2', async () => {
+test('selectPlatform rejects a number that is neither 1 nor 2', async () => {
     await assert.rejects(
         () => withScale({ SNS: 'SNS A' }, (link) => driver.selectPlatform(link, { platform: 7 })),
         (err) => {
@@ -254,7 +254,7 @@ test('selectPlatform rechaza un numero que no es 1 ni 2', async () => {
     );
 });
 
-test('selectPlatform en un equipo de una sola plataforma da not_supported', async () => {
+test('selectPlatform on a single-platform device gives not_supported', async () => {
     await assert.rejects(
         () => withScale({ S: 'S S 0.000 kg' }, (link) => driver.selectPlatform(link, { platform: 1 })),
         (err) => {
@@ -264,11 +264,11 @@ test('selectPlatform en un equipo de una sola plataforma da not_supported', asyn
     );
 });
 
-test('guidedWeigh declara la capacidad como garantizada', () => {
+test('guidedWeigh declares the capability as guaranteed', () => {
     assert.ok(driver.capabilities.includes('guidedWeigh'));
 });
 
-test('guidedWeigh hace la secuencia completa D, DS, S, TA, DW', async () => {
+test('guidedWeigh runs the full D, DS, S, TA, DW sequence', async () => {
     const result = await withScale({
         D: 'D A', DS: 'DS A', S: 'S S 2.500 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -281,7 +281,7 @@ test('guidedWeigh hace la secuencia completa D, DS, S, TA, DW', async () => {
     assert.equal(result.data.displayRestored, true);
 });
 
-test('guidedWeigh sin texto no envia D', async () => {
+test('guidedWeigh without text does not send D', async () => {
     await withScale({
         S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -290,7 +290,7 @@ test('guidedWeigh sin texto no envia D', async () => {
     });
 });
 
-test('guidedWeigh sin beep no envia DS', async () => {
+test('guidedWeigh without beep does not send DS', async () => {
     await withScale({
         D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -299,8 +299,8 @@ test('guidedWeigh sin beep no envia DS', async () => {
     });
 });
 
-test('guidedWeigh sigue adelante si el equipo no tiene zumbador', async () => {
-    // DS no esta en la tabla, asi que la bascula falsa contesta ES.
+test('guidedWeigh proceeds even if the device has no buzzer', async () => {
+    // DS is not in the table, so the fake scale answers ES.
     const result = await withScale({
         D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -308,12 +308,12 @@ test('guidedWeigh sigue adelante si el equipo no tiene zumbador', async () => {
         assert.deepEqual(scale.received, ['D "HOLA"', 'DS', 'S', 'TA', 'DW']);
         return res;
     });
-    // Un pitido que no suena no es razon para no dar la pesada.
+    // A beep that doesn't sound is not a reason to withhold the weighing.
     assert.deepEqual(result.data.net, { value: 1000, unit: 'g' });
-    assert.ok(result.raw.some((line) => line === 'ES'), 'el ES deberia quedar en raw');
+    assert.ok(result.raw.some((line) => line === 'ES'), 'the ES should stay in raw');
 });
 
-test('guidedWeigh usa SI cuando waitStable es false', async () => {
+test('guidedWeigh uses SI when waitStable is false', async () => {
     await withScale({
         SI: 'SI D 0.900 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -323,7 +323,7 @@ test('guidedWeigh usa SI cuando waitStable es false', async () => {
     });
 });
 
-// --- C2: timeoutMs invalido no debe colgar la conexion para siempre ---
+// --- C2: an invalid timeoutMs must not hang the connection forever ---
 
 function describeBadValue(value) {
     if (typeof value === 'number' && Number.isNaN(value)) return 'NaN';
@@ -334,17 +334,17 @@ function describeBadValue(value) {
 
 for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
     const label = describeBadValue(bad);
-    test(`guidedWeigh rechaza timeoutMs=${label} de inmediato, sin colgarse`, async () => {
+    test(`guidedWeigh rejects timeoutMs=${label} immediately, without hanging`, async () => {
         await withScale({
             S: 'S S 1.234 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
         }, async (link) => {
             const ceiling = new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('no debia colgarse')), 4000);
+                setTimeout(() => reject(new Error('should not have hung')), 4000);
             });
             await assert.rejects(
                 Promise.race([driver.guidedWeigh(link, { timeoutMs: bad }), ceiling]),
                 (err) => {
-                    assert.ok(err instanceof ScaleError, `esperaba ScaleError, recibido: ${err}`);
+                    assert.ok(err instanceof ScaleError, `expected ScaleError, got: ${err}`);
                     assert.equal(err.code, 'protocol');
                     return true;
                 },
@@ -353,7 +353,7 @@ for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
     });
 }
 
-test('guidedWeigh acepta el timeoutMs por defecto (10000) sin necesidad de indicarlo', async () => {
+test('guidedWeigh accepts the default timeoutMs (10000) without needing to specify it', async () => {
     await withScale({
         S: 'S S 1.234 kg', TA: 'TA A 0.000 kg', DW: 'DW A',
     }, async (link, scale) => {
@@ -363,7 +363,7 @@ test('guidedWeigh acepta el timeoutMs por defecto (10000) sin necesidad de indic
     });
 });
 
-test('guidedWeigh restaura el display aunque la pesada falle', async () => {
+test('guidedWeigh restores the display even if the weighing fails', async () => {
     const scale = await createLineScale({ D: 'D A', S: 'S +', DW: 'DW A' });
     const link = new TcpLink({
         host: '127.0.0.1',
@@ -379,16 +379,16 @@ test('guidedWeigh restaura el display aunque la pesada falle', async () => {
                 return true;
             },
         );
-        // Esto es lo importante: el display no se queda con el texto puesto.
-        assert.ok(scale.received.includes('DW'), 'deberia haber enviado DW pese al fallo');
+        // This is the important part: the display doesn't stay stuck showing the text.
+        assert.ok(scale.received.includes('DW'), 'should have sent DW despite the failure');
     } finally {
         link.close();
         await scale.close();
     }
 });
 
-test('guidedWeigh no enmascara el error original si tambien falla el DW', async () => {
-    const scale = await createLineScale({ D: 'D A', S: 'S +' });  // DW contesta ES
+test('guidedWeigh does not mask the original error if the DW also fails', async () => {
+    const scale = await createLineScale({ D: 'D A', S: 'S +' });  // DW answers ES
     const link = new TcpLink({
         host: '127.0.0.1',
         port: scale.port,
@@ -399,7 +399,7 @@ test('guidedWeigh no enmascara el error original si tambien falla el DW', async 
         await assert.rejects(
             () => driver.guidedWeigh(link, { text: 'PESAR' }),
             (err) => {
-                assert.equal(err.code, 'overload', 'debe ganar el error de la pesada');
+                assert.equal(err.code, 'overload', 'the weighing error should win');
                 return true;
             },
         );
@@ -409,9 +409,9 @@ test('guidedWeigh no enmascara el error original si tambien falla el DW', async 
     }
 });
 
-test('guidedWeigh da la pesada aunque el DW final falle: no lanza, y displayRestored es false', async () => {
-    // DW no esta en la tabla, asi que la bascula falsa contesta ES: la pesada
-    // en si sale bien, pero restaurar el display falla despues.
+test('guidedWeigh gives the weighing even if the final DW fails: it does not throw, and displayRestored is false', async () => {
+    // DW is not in the table, so the fake scale answers ES: the weighing
+    // itself goes fine, but restoring the display fails afterwards.
     const result = await withScale({
         D: 'D A', S: 'S S 1.000 kg', TA: 'TA A 0.000 kg',
     }, async (link, scale) => {
@@ -419,9 +419,9 @@ test('guidedWeigh da la pesada aunque el DW final falle: no lanza, y displayRest
         assert.deepEqual(scale.received, ['D "PESAR"', 'S', 'TA', 'DW']);
         return res;
     });
-    // Un DW que falla no debe tirar el peso: el operario ya se ha pesado.
+    // A DW that fails must not throw away the weight: the operator has already been weighed.
     assert.deepEqual(result.data.net, { value: 1000, unit: 'g' });
     assert.equal(result.data.displayRestored, false);
-    // El ES del DW fallido deberia quedar en raw, igual que el del pitido.
-    assert.ok(result.raw.some((line) => line === 'ES'), 'el ES del DW fallido deberia quedar en raw');
+    // The ES from the failed DW should stay in raw, just like the beep's.
+    assert.ok(result.raw.some((line) => line === 'ES'), 'the ES from the failed DW should stay in raw');
 });

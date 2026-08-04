@@ -27,7 +27,7 @@ function post(base, path, body) {
     });
 }
 
-test('scale-command exige ip, port y command', async () => {
+test('scale-command requires ip, port and command', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale-command', { ip: '127.0.0.1' });
@@ -40,7 +40,7 @@ test('scale-command exige ip, port y command', async () => {
     }
 });
 
-test('scale-command anade CRLF y traduce <ETX> a 0x03', async () => {
+test('scale-command adds CRLF and translates <ETX> to 0x03', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write('OK\r\n'));
     const app = await startApp();
     try {
@@ -55,7 +55,7 @@ test('scale-command anade CRLF y traduce <ETX> a 0x03', async () => {
     }
 });
 
-test('scale-command no duplica el CRLF si ya venia', async () => {
+test('scale-command does not duplicate the CRLF if it was already there', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write('OK\r\n'));
     const app = await startApp();
     try {
@@ -69,7 +69,7 @@ test('scale-command no duplica el CRLF si ya venia', async () => {
     }
 });
 
-test('scale-command re-escapa STX y ETX en la respuesta y conserva la cruda', async () => {
+test('scale-command re-escapes STX and ETX in the response and keeps the raw one', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write('\x02I!LV01\x03\r\n', 'latin1'));
     const app = await startApp();
     try {
@@ -86,7 +86,7 @@ test('scale-command re-escapa STX y ETX en la respuesta y conserva la cruda', as
     }
 });
 
-test('scale-hex envia los bytes exactos sin anadir terminador', async () => {
+test('scale-hex sends the exact bytes without adding a terminator', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write('OK'));
     const app = await startApp();
     try {
@@ -100,7 +100,7 @@ test('scale-hex envia los bytes exactos sin anadir terminador', async () => {
     }
 });
 
-test('scale-hex acepta el hex sin espacios y devuelve hex y ascii', async () => {
+test('scale-hex accepts hex without spaces and returns hex and ascii', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write(Buffer.from([0x41, 0x03])));
     const app = await startApp();
     try {
@@ -117,7 +117,7 @@ test('scale-hex acepta el hex sin espacios y devuelve hex y ascii', async () => 
     }
 });
 
-test('scale-hex rechaza longitud impar', async () => {
+test('scale-hex rejects an odd length', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale-hex', {
@@ -130,7 +130,7 @@ test('scale-hex rechaza longitud impar', async () => {
     }
 });
 
-test('un puerto cerrado da 500 y success false', async () => {
+test('a closed port gives 500 and success false', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale-command', {
@@ -143,7 +143,7 @@ test('un puerto cerrado da 500 y success false', async () => {
     }
 });
 
-test('scale-command decodifica en ascii: el byte alto pierde el bit 7', async () => {
+test('scale-command decodes as ascii: the high byte loses bit 7', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write(Buffer.from([0x41, 0xE9, 0x42]), 'latin1'));
     const app = await startApp();
     try {
@@ -159,7 +159,7 @@ test('scale-command decodifica en ascii: el byte alto pierde el bit 7', async ()
     }
 });
 
-test('scale-hex decodifica en latin1: preserva bytes altos', async () => {
+test('scale-hex decodes as latin1: preserves high bytes', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write(Buffer.from([0x41, 0xE9, 0x42])));
     const app = await startApp();
     try {
@@ -176,7 +176,7 @@ test('scale-hex decodifica en latin1: preserva bytes altos', async () => {
     }
 });
 
-test('scale-hex exige ip, port y hex', async () => {
+test('scale-hex requires ip, port and hex', async () => {
     const app = await startApp();
     try {
         const res = await post(app.base, '/scale-hex', { ip: '127.0.0.1' });

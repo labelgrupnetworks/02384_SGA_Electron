@@ -4,17 +4,18 @@ const { ScaleError } = require('./errors');
 const DEFAULT_FRAMING = { terminator: '\r\n', encoding: 'latin1', quietMs: 250, totalMs: 3000 };
 
 /**
- * Conexion TCP a una bascula, con enmarcado de respuestas por lineas.
+ * TCP connection to a scale, with line-based framing of responses.
  *
- * Portado de la clase SicsLink de mt.py. Frente al patron que habia en main.js
- * (cerrar el socket 100 ms despues de la primera rafaga) aporta tres cosas:
+ * Ported from the SicsLink class in mt.py. Compared to the pattern that used
+ * to live in main.js (closing the socket 100 ms after the first burst), it
+ * brings three things:
  *
- *  - lee hasta que pasan `quietMs` sin datos nuevos, con techo `totalMs`, asi que
- *    una respuesta multilinea llega completa;
- *  - drena lo que quede pendiente antes de cada envio, asi que la cola de un
- *    comando no se lee como respuesta del siguiente;
- *  - admite varios comandos sobre la misma conexion, que es lo que hace posible
- *    la secuencia texto -> pitido -> pesada -> restaurar display.
+ *  - it reads until `quietMs` passes with no new data, capped by `totalMs`, so
+ *    a multi-line response arrives complete;
+ *  - it drains whatever is left pending before each send, so the tail of one
+ *    command isn't read as the response to the next;
+ *  - it supports several commands over the same connection, which is what
+ *    makes the text -> beep -> weigh -> restore display sequence possible.
  */
 class TcpLink {
     constructor({ host, port, framing = {} }) {
@@ -23,9 +24,9 @@ class TcpLink {
         this.framing = { ...DEFAULT_FRAMING, ...framing };
         this.socket = null;
         this.buffer = '';
-        this.pending = [];   // lineas completas ya recibidas y sin consumir por ningun _readLines
-        this.fatal = null;   // ScaleError que mato la conexion
-        this.reads = new Set(); // contextos de _readLines() en curso, para poder cancelarlos desde close()
+        this.pending = [];   // complete lines already received and not yet consumed by any _readLines
+        this.fatal = null;   // ScaleError that killed the connection
+        this.reads = new Set(); // in-flight _readLines() contexts, so they can be cancelled from close()
     }
 
     get connected() {
@@ -69,15 +70,16 @@ class TcpLink {
             socket.removeAllListeners();
             socket.destroy();
         }
-        // Antes de tirar el estado compartido, se sincroniza lo que hubiera en
-        // this.pending hacia cada lectura en curso (this.reads). Una linea
-        // puede haber sido absorbida del socket (this._absorb ya la puso en
-        // this.pending) sin que el tick de ninguna _readLines() la haya
-        // drenado todavia hacia su ctx.lines local; si se vaciara this.pending
-        // antes de este paso, esa linea se perderia en silencio al cancelar.
-        // Orden importa: sync primero, wipe despues. Si hay varias lecturas
-        // solapadas en curso, todas reciben la copia (ninguna se queda sin lo
-        // ya recibido solo por no ser "la que gana" en una cancelacion).
+        // Before dropping the shared state, whatever is in this.pending is
+        // synced out to every in-flight read (this.reads). A line may have
+        // been absorbed from the socket (this._absorb already put it in
+        // this.pending) without any _readLines() tick having drained it yet
+        // into its local ctx.lines; if this.pending were cleared before this
+        // step, that line would be silently lost on cancellation. Order
+        // matters: sync first, wipe after. If several reads are in flight at
+        // once, all of them get the copy (none is left without what it had
+        // already received just for not being "the one that wins" a
+        // cancellation).
         if (this.pending.length > 0) {
             for (const ctx of this.reads) {
                 ctx.lines.push(...this.pending);
@@ -86,9 +88,10 @@ class TcpLink {
         this.buffer = '';
         this.pending = [];
         this.fatal = null;
-        // Cancela cualquier _readLines() en curso: cada uno resuelve con lo que
-        // ya llevara acumulado (nunca rechaza) para que un close() a media
-        // lectura no explote como error en quien esperaba la respuesta.
+        // Cancels any in-flight _readLines(): each one resolves with whatever
+        // it had already accumulated (it never rejects), so a close() midway
+        // through a read doesn't blow up as an error for whoever was waiting
+        // on the response.
         if (this.reads.size > 0) {
             const cancelled = [...this.reads];
             this.reads.clear();
@@ -111,17 +114,17 @@ class TcpLink {
     }
 
     /**
-     * Descarta, del lado JS, lo que ya hubiera llegado y quedado sin consumir
-     * de un comando anterior (`this.buffer`/`this.pending`) justo antes de
-     * enviar el siguiente.
+     * Discards, on the JS side, whatever had already arrived and been left
+     * unconsumed from a previous command (`this.buffer`/`this.pending`) right
+     * before sending the next one.
      *
-     * Esto NO garantiza que la respuesta leida despues pertenezca al comando
-     * que se acaba de enviar: una linea que llegue por el cable DESPUES de
-     * este drenado (por ejemplo una respuesta tardia del comando anterior, o
-     * una notificacion no solicitada) sigue pudiendo colarse como si fuera la
-     * respuesta del nuevo comando. Esa garantia la da `assertOk` comparando el
-     * primer token de cada linea contra el comando esperado (Critical 1 de la
-     * revision final), no este drenado.
+     * This does NOT guarantee that the response read afterwards belongs to
+     * the command that was just sent: a line that arrives over the wire
+     * AFTER this drain (for example a late response to the previous command,
+     * or an unsolicited notification) can still slip in as if it were the
+     * response to the new command. That guarantee is provided by `assertOk`
+     * comparing the first token of each line against the expected command
+     * (Critical 1 from the final review), not by this drain.
      */
     _drain() {
         this.pending = [];
@@ -149,24 +152,27 @@ class TcpLink {
     }
 
     /**
-     * Espera hasta `quiet` ms de silencio tras la primera linea, o hasta que
-     * venza `total`. Devuelve las lineas acumuladas; array vacio si no llego nada.
+     * Waits for up to `quiet` ms of silence after the first line, or until
+     * `total` expires. Returns the accumulated lines; empty array if nothing
+     * arrived.
      *
-     * Acumula en un array local a esta llamada (`ctx.lines`), drenando
-     * `this.pending` hacia el en cada tick, en vez de leer y reasignar el
-     * campo compartido de la instancia directamente. Asi una linea consumida
-     * por una llamada no queda visible para otra llamada solapada, y close()
-     * puede cancelar esta lectura en curso (registrada en `this.reads`)
-     * resolviendola de inmediato con lo que llevara acumulado hasta ese punto.
+     * Accumulates into an array local to this call (`ctx.lines`), draining
+     * `this.pending` into it on every tick, instead of reading and
+     * reassigning the instance's shared field directly. This way a line
+     * consumed by one call isn't left visible to another overlapping call,
+     * and close() can cancel this in-flight read (registered in
+     * `this.reads`) by resolving it immediately with whatever it had
+     * accumulated up to that point.
      */
     _readLines(quiet, total) {
-        // Defensa de ultimo recurso: quiet/total pueden llegar no numericos o no
-        // positivos desde una capa superior (p.ej. `timeoutMs` como string desde
-        // un body HTTP: `Date.now() + "10000"` es concatenacion, no suma, y la
-        // comparacion contra ese "deadline" no vence nunca). Un primitivo de
-        // transporte no debe poder colgarse para siempre porque quien lo llama
-        // paso un valor raro: si no es un numero finito y positivo, cae al valor
-        // por defecto de este framing en vez de propagar el valor malo.
+        // Last-resort defence: quiet/total may arrive non-numeric or
+        // non-positive from a higher layer (e.g. `timeoutMs` as a string from
+        // an HTTP body: `Date.now() + "10000"` is concatenation, not
+        // addition, and the comparison against that "deadline" never comes
+        // due). A transport primitive must not be able to hang forever just
+        // because its caller passed a weird value: if it isn't a finite,
+        // positive number, it falls back to this framing's default instead of
+        // propagating the bad value.
         const safeQuiet = (Number.isFinite(quiet) && quiet > 0) ? quiet : this.framing.quietMs;
         const safeTotal = (Number.isFinite(total) && total > 0) ? total : this.framing.totalMs;
         const deadline = Date.now() + safeTotal;
@@ -194,9 +200,9 @@ class TcpLink {
                 drain();
                 if (this.fatal && ctx.lines.length === 0) {
                     const err = this.fatal;
-                    // Se quita de this.reads antes de close() para que el bucle
-                    // de cancelacion de close() no intente resolver esta misma
-                    // lectura (que va a rechazar, no a resolver).
+                    // Removed from this.reads before close() so close()'s
+                    // cancellation loop doesn't try to resolve this very same
+                    // read (which is going to reject, not resolve).
                     this.reads.delete(ctx);
                     this.close();
                     finishReject(err);
@@ -204,7 +210,7 @@ class TcpLink {
                 }
                 const now = Date.now();
                 if (ctx.lines.length > 0) {
-                    // Ya hay algo: se espera un hueco de silencio por si viene mas.
+                    // There's already something: wait for a gap of silence in case more comes.
                     const count = ctx.lines.length;
                     ctx.timer = setTimeout(() => {
                         drain();

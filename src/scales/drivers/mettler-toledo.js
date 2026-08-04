@@ -3,10 +3,10 @@ const { toGrams } = require('../units');
 const { assertOk, parseWeight, isStable } = require('./mt-sics-protocol');
 
 /**
- * Ejecuta un comando y devuelve los tokens ya validados junto a las lineas
- * crudas. `command` puede llevar argumento (`SNS 2`, `D "texto"`); solo el
- * primer token (el nombre del comando) es lo que assertOk exige ver
- * reflejado en la respuesta.
+ * Runs a command and returns the already-validated tokens together with the
+ * raw lines. `command` may carry an argument (`SNS 2`, `D "text"`); only the
+ * first token (the command name) is what assertOk requires to see reflected
+ * in the response.
  */
 async function ask(link, command, options = {}) {
     const lines = await link.command(command, options);
@@ -28,20 +28,21 @@ const driver = {
     defaultPort: 4305,
     framing: { terminator: '\r\n', encoding: 'latin1', quietMs: 250, totalMs: 3000 },
 
-    // Garantizadas por MT-SICS en cualquier equipo de la familia.
+    // Guaranteed by MT-SICS on any device in the family.
     capabilities: ['weigh', 'tare', 'clearTare', 'zero', 'info', 'display', 'displayClear', 'guidedWeigh'],
 
-    // Existen en el protocolo pero dependen del equipo: DS necesita zumbador y
-    // SNS mas de una plataforma. Si el equipo no las tiene contesta ES, que
-    // mt-sics-protocol traduce a not_supported.
+    // These exist in the protocol but depend on the device: DS needs a buzzer
+    // and SNS needs more than one platform. If the device doesn't have them
+    // it answers ES, which mt-sics-protocol maps to not_supported.
     deviceDependent: ['beep', 'selectPlatform'],
 
     models: {},
 
     async weigh(link) {
-        // MT-SICS no da neto, tara y bruto en una trama: hacen falta dos comandos
-        // y el bruto se calcula. Bizerba si lo da de golpe; /scale/weigh esconde
-        // esa diferencia, que es el motivo de normalizar.
+        // MT-SICS doesn't give net, tare and gross in one telegram: it takes two
+        // commands and the gross weight is computed. Bizerba does give it all at
+        // once; /scale/weigh hides that difference, which is the reason for
+        // normalising.
         const net = await ask(link, 'S');
         const netGrams = weightOrFail(net.tokens, 'S');
 
@@ -60,20 +61,21 @@ const driver = {
     },
 
     /**
-     * Texto en el display, pitido y pesada sobre una sola conexion.
+     * Display text, beep and weighing over a single connection.
      *
-     * El display se restaura SIEMPRE en el finally. Sin eso, una bascula se queda
-     * con el texto puesto y sin mostrar el peso cuando algo se corta a mitad, y el
-     * operario ve un display congelado sin saber por que.
+     * The display is ALWAYS restored in the finally. Without that, a scale is
+     * left with the text showing and not displaying the weight when something
+     * gets cut off midway, and the operator sees a frozen display with no idea
+     * why.
      */
     async guidedWeigh(link, { text, beep = false, waitStable = true, timeoutMs = 10000 } = {}) {
-        // timeoutMs llega tal cual del body HTTP del SGA: un JSON puede llevarlo
-        // como string, y `Date.now() + "10000"` en transport.js es concatenacion,
-        // no suma, asi que la lectura nunca vencia y el socket se quedaba abierto
-        // para siempre (revision final, Critical 2). transport.js ya cae a un
-        // valor por defecto si esto le llegara igualmente mal, pero un valor
-        // invalido puesto aqui, en el limite con la peticion HTTP, merece un
-        // error claro en vez de una sustitucion silenciosa por 10000.
+        // timeoutMs arrives as-is from the SGA's HTTP body: a JSON payload may
+        // carry it as a string, and `Date.now() + "10000"` in transport.js is
+        // concatenation, not addition, so the read never expired and the socket
+        // stayed open forever (final review, Critical 2). transport.js already
+        // falls back to a default if this were to arrive equally bad, but an
+        // invalid value set here, right at the boundary with the HTTP request,
+        // deserves a clear error instead of a silent substitution with 10000.
         if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
             throw new ScaleError(
                 'protocol',
@@ -96,7 +98,7 @@ const driver = {
                     const beeped = await this.beep(link);
                     raw.push(...beeped.raw);
                 } catch (err) {
-                    // Un pitido que no suena no es razon para no dar la pesada.
+                    // A beep that doesn't sound isn't a reason to withhold the weighing.
                     if (err.code !== 'not_supported') throw err;
                     if (err.detail?.response) raw.push(err.detail.response);
                 }
@@ -120,19 +122,20 @@ const driver = {
             failure = err;
         }
 
-        // Restaurar el display va aqui y no en un finally: finally corre DESPUES de
-        // evaluar el return, asi que displayRestored saldria a true sin que el DW
-        // hubiese ocurrido todavia. Este orden lo hace honesto.
+        // Restoring the display goes here and not in a finally: finally runs
+        // AFTER the return value is evaluated, so displayRestored would come
+        // out true without the DW having happened yet. This order keeps it
+        // honest.
         let displayRestored = false;
         try {
             const cleared = await this.displayClear(link);
             raw.push(...cleared.raw);
             displayRestored = true;
         } catch (err) {
-            // Se ignora a proposito: si el DW falla, el error que importa es el de
-            // la pesada, y relanzar aqui lo enmascararia. Pero la respuesta (si la
-            // hubo) queda en raw, igual que con el pitido, para que no desaparezca
-            // sin dejar rastro de que se intento.
+            // Ignored on purpose: if the DW fails, the error that matters is the
+            // weighing's, and rethrowing here would mask it. But the response (if
+            // there was one) stays in raw, just like with the beep, so it doesn't
+            // vanish without leaving a trace that it was attempted.
             if (err.detail?.response) raw.push(err.detail.response);
         }
 
@@ -160,7 +163,7 @@ const driver = {
         const model = await ask(link, 'I2');
         const serial = await ask(link, 'I4');
 
-        // I2 devuelve "MODELO capacidad unidad" en un solo campo entrecomillado.
+        // I2 returns "MODEL capacity unit" in a single quoted field.
         const raw = model.tokens[2] || '';
         const split = raw.split(/\s+/);
         return {
@@ -183,11 +186,11 @@ const driver = {
     },
 
     async display(link, { text } = {}) {
-        // Las comillas dobles delimitan el argumento y \r\n delimita la trama:
-        // ninguno de los dos puede sobrevivir dentro del texto, o el argumento
-        // se convierte en un vector para inyectar comandos MT-SICS adicionales
-        // (incluidos destructivos como RST o C2). Se limpia antes de validar,
-        // para que un texto que solo contenia esos caracteres cuente como vacio.
+        // Double quotes delimit the argument and \r\n delimits the telegram:
+        // neither can survive inside the text, or the argument turns into a
+        // vector for injecting additional MT-SICS commands (including
+        // destructive ones like RST or C2). It is cleaned before validating,
+        // so that a text containing only those characters counts as empty.
         // eslint-disable-next-line no-control-regex
         const clean = String(text ?? '').replace(/["\x00-\x1F\x7F]/g, '');
         if (!clean.trim()) {

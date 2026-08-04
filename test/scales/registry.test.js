@@ -19,36 +19,36 @@ function toyDriver(overrides = {}) {
     };
 }
 
-test('resolveDriver devuelve la base cuando no se pasa modelo', () => {
+test('resolveDriver returns the baseline when no model is passed', () => {
     const registry = createRegistry([toyDriver()]);
     const driver = registry.resolveDriver('toy', null);
     assert.equal(driver.id, 'toy');
     assert.equal(driver.framing.terminator, '\r\n');
 });
 
-test('un modelo con override cambia solo lo declarado y hereda el resto', () => {
+test('a model with an override changes only what is declared and inherits the rest', () => {
     const registry = createRegistry([toyDriver({
         models: { rare: { framing: { terminator: '\r' } } },
     })]);
     const driver = registry.resolveDriver('toy', 'rare');
     assert.equal(driver.framing.terminator, '\r');
-    assert.equal(driver.framing.encoding, 'latin1', 'encoding deberia heredarse');
+    assert.equal(driver.framing.encoding, 'latin1', 'encoding should be inherited');
     assert.equal(driver.defaultPort, 1234);
     assert.equal(typeof driver.weigh, 'function');
 });
 
-test('un modelo sin override cae a la base sin fallar', () => {
+test('a model without an override falls back to the baseline without failing', () => {
     const registry = createRegistry([toyDriver()]);
     const driver = registry.resolveDriver('toy', 'ics425');
     assert.equal(driver.framing.terminator, '\r\n');
 });
 
-test('resolveDriver sin logger no lanza (logger es opcional)', () => {
+test('resolveDriver without a logger does not throw (logger is optional)', () => {
     const registry = createRegistry([toyDriver()]);
     assert.doesNotThrow(() => registry.resolveDriver('toy', 'ics425'));
 });
 
-test('resolveDriver registra en debug cuando el modelo no tiene override', () => {
+test('resolveDriver logs at debug when the model has no override', () => {
     const registry = createRegistry([toyDriver()]);
     const calls = [];
     const logger = { debug: (msg) => calls.push(msg) };
@@ -58,7 +58,7 @@ test('resolveDriver registra en debug cuando el modelo no tiene override', () =>
     assert.match(calls[0], /toy/);
 });
 
-test('resolveDriver NO registra en debug cuando el modelo si tiene override', () => {
+test('resolveDriver does NOT log at debug when the model does have an override', () => {
     const registry = createRegistry([toyDriver({
         models: { rare: { framing: { terminator: '\r' } } },
     })]);
@@ -68,7 +68,7 @@ test('resolveDriver NO registra en debug cuando el modelo si tiene override', ()
     assert.equal(calls.length, 0);
 });
 
-test('resolveDriver sin modelo no registra nada, con o sin logger', () => {
+test('resolveDriver without a model logs nothing, with or without a logger', () => {
     const registry = createRegistry([toyDriver()]);
     const calls = [];
     const logger = { debug: (msg) => calls.push(msg) };
@@ -76,7 +76,7 @@ test('resolveDriver sin modelo no registra nada, con o sin logger', () => {
     assert.equal(calls.length, 0);
 });
 
-test('una marca desconocida lanza ScaleError unknown_brand con la lista valida', () => {
+test('an unknown brand throws ScaleError unknown_brand with the list of valid ones', () => {
     const registry = createRegistry([toyDriver()]);
     assert.throws(() => registry.resolveDriver('acme', null), (err) => {
         assert.ok(err instanceof ScaleError);
@@ -86,40 +86,40 @@ test('una marca desconocida lanza ScaleError unknown_brand con la lista valida',
     });
 });
 
-test('rechaza un driver que declara una capacidad sin implementarla', () => {
+test('rejects a driver that declares a capability without implementing it', () => {
     assert.throws(
         () => createRegistry([toyDriver({ capabilities: ['weigh', 'tare'] })]),
         /declara 'tare' pero no la implementa/,
     );
 });
 
-test('rechaza un driver que implementa una operacion sin declararla', () => {
+test('rejects a driver that implements an operation without declaring it', () => {
     assert.throws(
         () => createRegistry([toyDriver({ async tare() {} })]),
         /implementa 'tare' pero no la declara/,
     );
 });
 
-test('rechaza una capacidad que no esta en OPERATIONS', () => {
+test('rejects a capability that is not in OPERATIONS', () => {
     assert.throws(
         () => createRegistry([toyDriver({ capabilities: ['weigh', 'inventada'], async inventada() {} })]),
         /operacion desconocida: inventada/,
     );
 });
 
-test('rechaza una operacion declarada a la vez como garantizada y dependiente', () => {
+test('rejects an operation declared as both guaranteed and device-dependent', () => {
     assert.throws(
         () => createRegistry([toyDriver({ capabilities: ['weigh'], deviceDependent: ['weigh'] })]),
         /declarada dos veces: weigh/,
     );
 });
 
-test('rechaza al construir un override de modelo que declara una capacidad sin implementarla', () => {
-    // mergeOverride por si solo no revalida coherencia: un override que
-    // cambiara capabilities sin que el driver implemente lo nuevo declarado
-    // pasaria desapercibido hasta que alguien pidiera ese modelo en
-    // produccion. Debe fallar aqui, en createRegistry, no mas tarde en
-    // resolveDriver ni como un 500 en caliente.
+test('rejects building a model override that declares a capability without implementing it', () => {
+    // mergeOverride by itself doesn't revalidate coherence: an override that
+    // changed capabilities without the driver implementing the newly declared
+    // one would go unnoticed until someone requested that model in
+    // production. It must fail here, in createRegistry, not later in
+    // resolveDriver nor as a live 500.
     assert.throws(
         () => createRegistry([toyDriver({
             models: { bogus: { capabilities: ['weigh', 'tare'] } },
@@ -128,7 +128,7 @@ test('rechaza al construir un override de modelo que declara una capacidad sin i
     );
 });
 
-test('rechaza al construir un override de modelo que declara una operacion inventada', () => {
+test('rejects building a model override that declares a made-up operation', () => {
     assert.throws(
         () => createRegistry([toyDriver({
             models: { bogus: { capabilities: ['weigh', 'inventada'] } },
@@ -137,7 +137,7 @@ test('rechaza al construir un override de modelo que declara una operacion inven
     );
 });
 
-test('un override de modelo coherente sigue construyendo sin problemas', () => {
+test('a coherent model override still builds without problems', () => {
     assert.doesNotThrow(() => createRegistry([toyDriver({
         deviceDependent: ['beep'],
         async beep() {},
@@ -145,7 +145,7 @@ test('un override de modelo coherente sigue construyendo sin problemas', () => {
     })]));
 });
 
-test('deviceDependent tambien exige implementacion', () => {
+test('deviceDependent also requires an implementation', () => {
     const registry = createRegistry([toyDriver({
         deviceDependent: ['beep'],
         async beep() {},
@@ -154,7 +154,7 @@ test('deviceDependent tambien exige implementacion', () => {
     assert.deepEqual(registry.allOperations(driver).sort(), ['beep', 'weigh']);
 });
 
-test('listBrands expone el catalogo para el SGA', () => {
+test('listBrands exposes the catalog for the SGA', () => {
     const registry = createRegistry([toyDriver({
         deviceDependent: ['beep'],
         async beep() {},
@@ -170,7 +170,7 @@ test('listBrands expone el catalogo para el SGA', () => {
     }]);
 });
 
-test('routePathFor convierte camelCase a kebab-case', () => {
+test('routePathFor converts camelCase to kebab-case', () => {
     assert.equal(routePathFor('weigh'), 'weigh');
     assert.equal(routePathFor('clearTare'), 'clear-tare');
     assert.equal(routePathFor('displayClear'), 'display-clear');
@@ -178,7 +178,7 @@ test('routePathFor convierte camelCase a kebab-case', () => {
     assert.equal(routePathFor('guidedWeigh'), 'guided-weigh');
 });
 
-test('OPERATIONS contiene las diez operaciones del spec', () => {
+test('OPERATIONS contains the ten operations from the spec', () => {
     assert.deepEqual([...OPERATIONS].sort(), [
         'beep', 'clearTare', 'display', 'displayClear', 'guidedWeigh',
         'info', 'selectPlatform', 'tare', 'weigh', 'zero',

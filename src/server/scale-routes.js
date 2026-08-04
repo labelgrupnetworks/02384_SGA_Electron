@@ -2,11 +2,11 @@ const { registry, OPERATIONS, routePathFor } = require('../scales');
 const { TcpLink } = require('../scales/transport');
 const { ScaleError, httpStatusFor } = require('../scales/errors');
 
-// Deriva un mensaje legible de cualquier valor, sin poder lanzar nunca. Un
-// `.message` que sea un getter que lance, o un `toString()` que lance (o que
-// no exista, como en un objeto con prototipo null), rompen `String(error)` o
-// el propio acceso a `error.message`. Este es el camino de error: si el
-// camino de error puede fallar, es peor que no tener camino de error.
+// Derives a readable message from any value, without ever being able to
+// throw. A `.message` that is a getter that throws, or a `toString()` that
+// throws (or doesn't exist, as with an object with a null prototype), break
+// `String(error)` or the very access to `error.message`. This is the error
+// path: if the error path can fail, it is worse than having no error path.
 function safeMessage(error) {
     try {
         return String(error?.message ?? error);
@@ -15,10 +15,10 @@ function safeMessage(error) {
     }
 }
 
-// Normaliza cualquier valor lanzado (no solo instancias de Error) a
-// {code, message, detail}. Un driver o dependencia puede lanzar `null`, un
-// string o un objeto plano, y el contrato {code, message, detail} de la
-// respuesta no puede depender de que quien lanzo haya usado un Error.
+// Normalises any thrown value (not just Error instances) to
+// {code, message, detail}. A driver or dependency may throw `null`, a string
+// or a plain object, and the response's {code, message, detail} contract
+// cannot depend on whoever threw having used an Error.
 function normalizeError(error) {
     if (error instanceof ScaleError) {
         return { code: error.code, message: error.message, detail: error.detail };
@@ -26,25 +26,25 @@ function normalizeError(error) {
     return { code: 'protocol', message: safeMessage(error), detail: null };
 }
 
-// `ip` llega del body HTTP: no hay garantia de que sea un string, y mucho
-// menos uno no vacio. Un objeto/array pasa la comprobacion de verdad (`{}` y
-// `[]` son truthy) y se cuela hasta `net.connect(port, options)`, que tiene
-// una sobrecarga donde el segundo argumento son opciones: con `ip: {}` el
-// socket ignora silenciosamente el host pedido y conecta a localhost en vez
-// de fallar, lo que en un piso de produccion significa hablar con la bascula
-// equivocada (o con ninguna) sin ningun error que lo delate.
+// `ip` arrives from the HTTP body: there is no guarantee it is a string, let
+// alone a non-empty one. An object/array passes the truthiness check (`{}`
+// and `[]` are truthy) and slips through to `net.connect(port, options)`,
+// which has an overload where the second argument is an options object: with
+// `ip: {}` the socket silently ignores the requested host and connects to
+// localhost instead of failing, which on a production floor means talking to
+// the wrong scale (or to none at all) with no error to give it away.
 function isValidIp(ip) {
     return typeof ip === 'string' && ip.trim().length > 0;
 }
 
-// El puerto puede llegar como number o como string numerico (el JSON del SGA
-// no siempre tipa igual sus campos), pero en ambos casos tiene que ser un
-// entero entre 1 y 65535: `Number("abc")` es NaN y antes se colaba hasta
-// `new TcpLink({ port: NaN })`, y algo como 99999 o 0 no son puertos TCP
-// validos aunque `Number(port)` no de NaN. Sin esto el fallo era un error
-// crudo de Node (ECONNREFUSED contra un puerto sin sentido, o similar) que
-// llegaba como 500 en vez del 400 que le corresponde a una peticion mal
-// formada.
+// The port may arrive as a number or as a numeric string (the SGA's JSON
+// doesn't always type its fields the same way), but either way it has to be
+// an integer between 1 and 65535: `Number("abc")` is NaN and used to slip
+// through to `new TcpLink({ port: NaN })`, and something like 99999 or 0
+// isn't a valid TCP port even though `Number(port)` doesn't give NaN.
+// Without this the failure was a raw Node error (ECONNREFUSED against a
+// nonsensical port, or similar) that arrived as a 500 instead of the 400
+// that a malformed request deserves.
 function isValidPort(port) {
     if (typeof port === 'number') {
         return Number.isInteger(port) && port >= 1 && port <= 65535;
@@ -82,10 +82,10 @@ async function runOperation(operation, req, res, logger) {
         });
     }
 
-    // Estan presentes, pero eso no dice que tengan una forma usable: un `ip`
-    // que no sea un string no vacio, o un `port` fuera de 1-65535, pasan la
-    // comprobacion de arriba (son truthy) y llegarian sin mas control hasta
-    // TcpLink/net.connect.
+    // They are present, but that doesn't mean they have a usable shape: an
+    // `ip` that isn't a non-empty string, or a `port` outside 1-65535, pass
+    // the check above (they are truthy) and would arrive with no further
+    // control all the way to TcpLink/net.connect.
     if (!isValidIp(ip) || !isValidPort(port)) {
         return fail(res, {
             brand,
@@ -106,8 +106,8 @@ async function runOperation(operation, req, res, logger) {
         return fail(res, { brand, model, op: operation, error });
     }
 
-    // Se comprueba antes de tocar la red: una operacion que la marca no tiene no
-    // merece ni abrir un socket.
+    // Checked before touching the network: an operation the brand doesn't have
+    // doesn't even deserve a socket being opened.
     if (!registry.allOperations(driver).includes(operation)) {
         return fail(res, {
             brand, model, op: operation,
@@ -154,8 +154,8 @@ function registerScaleRoutes(expressApp, logger, { version }) {
         res.json({ brands: registry.listBrands() });
     });
 
-    // Una ruta por operacion, derivada del registro. No hay una segunda lista de
-    // endpoints que pueda desincronizarse de OPERATIONS.
+    // One route per operation, derived from the registry. There is no second
+    // list of endpoints that could fall out of sync with OPERATIONS.
     for (const operation of OPERATIONS) {
         expressApp.post(`/scale/${routePathFor(operation)}`, (req, res) => {
             runOperation(operation, req, res, logger).catch((error) => {

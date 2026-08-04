@@ -1,7 +1,8 @@
 const { ScaleError } = require('./errors');
 
-// Nombres canonicos de operacion. Las rutas se derivan de aqui, asi que anadir
-// una operacion es anadirla a esta lista y a los drivers que la sepan hacer.
+// Canonical operation names. Routes are derived from here, so adding an
+// operation means adding it to this list and to the drivers that know how to
+// do it.
 const OPERATIONS = Object.freeze([
     'weigh', 'tare', 'clearTare', 'zero', 'info',
     'selectPlatform', 'display', 'displayClear', 'beep', 'guidedWeigh',
@@ -35,7 +36,7 @@ function validate(driver) {
     }
 }
 
-/** Fusion superficial de un nivel, suficiente para {framing, defaultPort, telegrams}. */
+/** Shallow one-level merge, enough for {framing, defaultPort, telegrams}. */
 function mergeOverride(base, override) {
     if (!override) return base;
     const merged = { ...base };
@@ -53,14 +54,14 @@ function createRegistry(drivers) {
     const byId = new Map();
     for (const driver of drivers) {
         validate(driver);
-        // Un override de modelo puede tocar `capabilities`/`deviceDependent` (o
-        // cualquier otra clave) via mergeOverride, y mergeOverride en si mismo
-        // no revalida coherencia: un override que declarase una capacidad no
-        // implementada, o duplicada, pasaria desapercibido hasta que alguien
-        // pidiera justo ese modelo en produccion, y reventaria entonces como un
-        // 500 en vez de fallar aqui, al arrancar, que es donde un catalogo mal
-        // escrito deberia fallar. Se revalida cada modelo declarado del driver
-        // con el mismo `validate` de la linea base.
+        // A model override can touch `capabilities`/`deviceDependent` (or any
+        // other key) via mergeOverride, and mergeOverride itself does not
+        // re-validate coherence: an override that declared an unimplemented,
+        // or duplicated, capability would go unnoticed until someone requested
+        // exactly that model in production, and would then blow up as a 500
+        // instead of failing here, at startup, which is where a badly written
+        // catalogue should fail. Every model declared by the driver is
+        // re-validated with the same baseline `validate`.
         for (const model of Object.keys(driver.models || {})) {
             validate(mergeOverride(driver, driver.models[model]));
         }
@@ -78,12 +79,13 @@ function createRegistry(drivers) {
         if (!model) return base;
         const override = (base.models || {})[model];
         if (override === undefined) {
-            // Un modelo sin override es el caso normal: el catalogo del SGA es mas
-            // amplio que esta tabla porque solo se da de alta lo que se desvia.
-            // Se registra en debug, no como aviso, para no llenar el log de
-            // ruido en el caso corriente; `logger` es opcional para no atar este
-            // modulo a ninguna dependencia concreta de logging.
-            logger?.debug?.(`modelo '${model}' de '${brand}' sin override registrado; se usa la linea base`);
+            // A model without an override is the normal case: the SGA's
+            // catalogue is wider than this table because only what deviates
+            // gets registered here. It is logged at debug, not as a warning,
+            // so as not to fill the log with noise in the common case;
+            // `logger` is optional so this module isn't tied to any concrete
+            // logging dependency.
+            logger?.debug?.(`model '${model}' of '${brand}' has no override registered; using the baseline`);
         }
         return mergeOverride(base, override);
     }

@@ -14,7 +14,7 @@ function talk(port, payload, { waitMs = 200 } = {}) {
     });
 }
 
-test('createRawScale entrega los bytes exactos que recibe', async () => {
+test('createRawScale delivers the exact bytes it receives', async () => {
     const scale = await createRawScale((chunk, socket) => socket.write(chunk));
     try {
         const reply = await talk(scale.port, Buffer.from([0x30, 0x03, 0x41]));
@@ -26,7 +26,7 @@ test('createRawScale entrega los bytes exactos que recibe', async () => {
     }
 });
 
-test('createLineScale responde segun el primer token de la linea', async () => {
+test('createLineScale responds based on the line\'s first token', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg', I2: 'I2 A "ICS425-BW 3.0045 kg"' });
     try {
         assert.equal(await talk(scale.port, 'S\r\n'), 'S S 1.234 kg\r\n');
@@ -36,7 +36,7 @@ test('createLineScale responde segun el primer token de la linea', async () => {
     }
 });
 
-test('createLineScale devuelve varias lineas cuando el valor es un array', async () => {
+test('createLineScale returns several lines when the value is an array', async () => {
     const scale = await createLineScale({ I0: ['I0 B 1 "S"', 'I0 B 2 "T"', 'I0 A'] });
     try {
         assert.equal(await talk(scale.port, 'I0\r\n'), 'I0 B 1 "S"\r\nI0 B 2 "T"\r\nI0 A\r\n');
@@ -45,7 +45,7 @@ test('createLineScale devuelve varias lineas cuando el valor es un array', async
     }
 });
 
-test('createLineScale no contesta nada cuando el valor es null', async () => {
+test('createLineScale answers nothing when the value is null', async () => {
     const scale = await createLineScale({ SI: null });
     try {
         assert.equal(await talk(scale.port, 'SI\r\n', { waitMs: 120 }), '');
@@ -55,7 +55,7 @@ test('createLineScale no contesta nada cuando el valor es null', async () => {
     }
 });
 
-test('chunkSize parte la respuesta sin cambiar el contenido', async () => {
+test('chunkSize splits the response without changing its content', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg' }, { chunkSize: 3 });
     try {
         // Verify both: content is correct AND chunking actually happened

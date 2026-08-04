@@ -1,11 +1,11 @@
 const ERROR_CODES = Object.freeze([
-    'connect',         // no se pudo abrir el socket
-    'timeout',         // se abrio pero no contesto a tiempo
-    'protocol',        // contesto algo que no encaja con el protocolo
-    'not_supported',   // la operacion no existe en esta bascula
-    'overload',        // sobrecarga o bajo rango
-    'unknown_brand',   // marca no registrada
-    'missing_params',  // faltan ip, port o brand en la peticion
+    'connect',         // the socket could not be opened
+    'timeout',         // it opened but did not answer in time
+    'protocol',        // it answered something that does not match the protocol
+    'not_supported',   // the operation does not exist on this scale
+    'overload',        // overload or under range
+    'unknown_brand',   // brand not registered
+    'missing_params',  // ip, port or brand missing from the request
 ]);
 
 const HTTP_STATUS = Object.freeze({

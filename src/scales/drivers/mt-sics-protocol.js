@@ -1,9 +1,10 @@
 const { ScaleError } = require('../errors');
 const { KNOWN_UNITS } = require('../units');
 
-// Respuestas fatales de MT-SICS. ES significa literalmente "no reconozco este
-// comando", asi que se traduce a not_supported y no a protocol: es lo que hace
-// que una bascula sin zumbador responda 501 en /scale/beep sin configurar nada.
+// Fatal MT-SICS responses. ES literally means "I do not recognise this
+// command", so it maps to not_supported and not to protocol: that is what
+// makes a scale without a buzzer answer 501 on /scale/beep with no
+// configuration needed.
 const FATAL = Object.freeze({
     ES: ['not_supported', 'el equipo no reconoce este comando'],
     ET: ['protocol', 'error de transmision'],
@@ -21,7 +22,7 @@ const STATUS_LABEL = Object.freeze({
     '-': 'bajo rango',
 });
 
-/** Trocea una linea respetando las comillas dobles: `I2 A "ICS425 3 kg"`. */
+/** Splits a line respecting double quotes: `I2 A "ICS425 3 kg"`. */
 function splitTokens(line) {
     const tokens = [];
     const re = /"([^"]*)"|(\S+)/g;
@@ -33,11 +34,11 @@ function splitTokens(line) {
 }
 
 /**
- * (valor, unidad) de una respuesta tipo `S S 0.000 kg`, o null.
+ * (value, unit) from a response like `S S 0.000 kg`, or null.
  *
- * Exige que el ultimo token sea una unidad conocida y el anterior un numero.
- * Comandos como TIM, DAT o I51 devuelven varios numeros sueltos y no deben
- * confundirse con una pesada.
+ * Requires the last token to be a known unit and the one before it a number.
+ * Commands like TIM, DAT or I51 return several loose numbers and must not be
+ * mistaken for a weighing.
  */
 function parseWeight(tokens) {
     if (tokens.length < 4) return null;
@@ -49,21 +50,21 @@ function parseWeight(tokens) {
 }
 
 /**
- * Valida la respuesta de `command` contra `lines`, exigiendo que la linea
- * usada como respuesta sea realmente la de ese comando.
+ * Validates `command`'s response against `lines`, requiring that the line
+ * used as the response actually belongs to that command.
  *
- * MT-SICS echoa el nombre del comando como primer token de su respuesta
- * (`S S 1.234 kg`, `TA A 0.000 kg`...), salvo los fatales `ES`/`ET`/`EL`, que
- * llegan como token suelto sin prefijo. Antes esta funcion miraba solo
- * `lines[0]`: si una bascula dejada en modo `SIR`/`SR` (o cualquier respuesta
- * que llegue tarde, despues de `quietMs` o de que expire `totalMs` de un
- * comando previo) dejaba una linea sin consumir en el buffer, esa linea
- * ajena se colaba como respuesta del comando siguiente sin que nada lo
- * detectara -- reproducido en la revision final como un tara y un bruto
- * incorrectos devueltos con HTTP 200. Ahora se recorren las lineas en orden
- * y se descarta cualquiera cuyo primer token no sea ni el comando esperado
- * ni un fatal; si ninguna encaja, es protocol en vez de aceptar la primera
- * que hubiera, silenciosamente equivocada.
+ * MT-SICS echoes the command name as the first token of its response
+ * (`S S 1.234 kg`, `TA A 0.000 kg`...), except for the fatal `ES`/`ET`/`EL`,
+ * which arrive as a bare token with no prefix. This function used to look
+ * only at `lines[0]`: if a scale left in `SIR`/`SR` mode (or any response
+ * that arrives late, after `quietMs` or after a previous command's
+ * `totalMs` expires) left an unconsumed line in the buffer, that stray line
+ * would slip in as the response to the next command with nothing to detect
+ * it -- reproduced in the final review as an incorrect tare and gross weight
+ * returned with HTTP 200. Now the lines are walked in order and any whose
+ * first token is neither the expected command nor a fatal is discarded; if
+ * none matches, it is protocol instead of silently accepting whichever line
+ * happened to be first, wrongly.
  */
 function assertOk(lines, command) {
     if (!lines || lines.length === 0) {

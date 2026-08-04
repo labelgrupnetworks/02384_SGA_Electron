@@ -10,7 +10,7 @@ function linkTo(port, framing = FRAMING) {
     return new TcpLink({ host: '127.0.0.1', port, framing });
 }
 
-test('command devuelve la linea de respuesta sin el terminador', async () => {
+test('command returns the response line without the terminator', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg' });
     const link = linkTo(scale.port);
     try {
@@ -22,7 +22,7 @@ test('command devuelve la linea de respuesta sin el terminador', async () => {
     }
 });
 
-test('anade el terminador al enviar', async () => {
+test('adds the terminator when sending', async () => {
     const scale = await createLineScale({ S: 'S S 0.000 kg' });
     const link = linkTo(scale.port);
     try {
@@ -35,7 +35,7 @@ test('anade el terminador al enviar', async () => {
     }
 });
 
-test('reune una respuesta que llega partida en varias rafagas', async () => {
+test('assembles a response that arrives split across several bursts', async () => {
     const scale = await createLineScale({ S: 'S S 1.234 kg' }, { chunkSize: 2 });
     const link = linkTo(scale.port);
     try {
@@ -47,7 +47,7 @@ test('reune una respuesta que llega partida en varias rafagas', async () => {
     }
 });
 
-test('devuelve varias lineas cuando la respuesta es multilinea', async () => {
+test('returns several lines when the response is multiline', async () => {
     const scale = await createLineScale({ I0: ['I0 B 1 "S"', 'I0 B 2 "T"', 'I0 A'] });
     const link = linkTo(scale.port);
     try {
@@ -59,7 +59,7 @@ test('devuelve varias lineas cuando la respuesta es multilinea', async () => {
     }
 });
 
-test('silencio total devuelve array vacio, no un error', async () => {
+test('total silence returns an empty array, not an error', async () => {
     const scale = await createLineScale({ SI: null });
     const link = linkTo(scale.port);
     try {
@@ -71,7 +71,7 @@ test('silencio total devuelve array vacio, no un error', async () => {
     }
 });
 
-test('varios comandos sobre una sola conexion no se mezclan', async () => {
+test('several commands over a single connection do not mix', async () => {
     const scale = await createLineScale({ S: 'S S 1.000 kg', TA: 'TA A 0.050 kg', DW: 'DW A' });
     const link = linkTo(scale.port);
     try {
@@ -86,13 +86,13 @@ test('varios comandos sobre una sola conexion no se mezclan', async () => {
     }
 });
 
-test('drena, del lado JS, lo ya llegado y sin consumir de un comando anterior antes de enviar el siguiente', async () => {
-    // La bascula contesta a SIR dos veces: la segunda linea llega y queda en
-    // this.pending ANTES de que se envie S; sin drenado se leeria como
-    // respuesta de S. Esto prueba solo eso -- una linea ya recibida antes del
-    // envio. No prueba (ni lo garantiza _drain) que una linea que llegue
-    // DESPUES del envio de S no pueda colarse como su respuesta: esa garantia
-    // es de assertOk (Critical 1), no de este drenado.
+test('drains, on the JS side, what already arrived and was unconsumed from a previous command before sending the next one', async () => {
+    // The scale answers SIR twice: the second line arrives and sits in
+    // this.pending BEFORE S is sent; without draining it would be read as
+    // S's response. This only tests that -- a line already received before
+    // the send. It does not test (nor does _drain guarantee) that a line
+    // arriving AFTER S is sent can't slip in as its response: that guarantee
+    // belongs to assertOk (Critical 1), not to this draining.
     const scale = await createLineScale({
         SIR: ['S D 0.500 kg', 'S D 0.600 kg'],
         S: 'S S 1.234 kg',
@@ -109,7 +109,7 @@ test('drena, del lado JS, lo ya llegado y sin consumir de un comando anterior an
     }
 });
 
-test('totalMs corta una bascula que no calla nunca', async () => {
+test('totalMs cuts off a scale that never goes quiet', async () => {
     const scale = await createRawScale((chunk, socket) => {
         const pump = () => {
             if (socket.destroyed) return;
@@ -124,22 +124,22 @@ test('totalMs corta una bascula que no calla nunca', async () => {
         const started = Date.now();
         const lines = await link.command('SIR');
         const elapsed = Date.now() - started;
-        assert.ok(lines.length > 1, 'deberia haber leido varias lineas');
-        assert.ok(elapsed < 1000, `tardo ${elapsed}ms, deberia cortar cerca de 300`);
+        assert.ok(lines.length > 1, 'should have read several lines');
+        assert.ok(elapsed < 1000, `took ${elapsed}ms, should cut off near 300`);
     } finally {
         link.close();
         await scale.close();
     }
 });
 
-// --- C2: un quietMs/totalMs no numerico no debe colgar la lectura para siempre ---
+// --- C2: a non-numeric quietMs/totalMs must not hang the read forever ---
 //
-// `Date.now() + total` es concatenacion de string si `total` es `"10000"`, y
-// `NaN`/`Infinity` nunca hacen que `now >= deadline` sea verdad. Antes del fix,
-// cualquiera de estos valores dejaba _readLines reprogramandose con
-// setTimeout(tick, 10) para siempre: la peticion HTTP no contestaba nunca y el
-// socket no se cerraba. El techo de la prueba es generoso pero finito, para
-// que una regresion falle rapido en vez de colgar la suite entera.
+// `Date.now() + total` is string concatenation if `total` is `"10000"`, and
+// `NaN`/`Infinity` never make `now >= deadline` come out true. Before the fix,
+// any of these values left _readLines rescheduling itself with
+// setTimeout(tick, 10) forever: the HTTP request never answered and the
+// socket never closed. The test's ceiling is generous but finite, so that a
+// regression fails fast instead of hanging the whole suite.
 function describeBadValue(value) {
     if (typeof value === 'number' && Number.isNaN(value)) return 'NaN';
     if (value === Infinity) return 'Infinity';
@@ -148,8 +148,8 @@ function describeBadValue(value) {
 }
 
 for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
-    test(`command con totalMs=${describeBadValue(bad)} responde y no cuelga`, async () => {
-        const scale = await createLineScale({ S: null }); // nunca contesta -> fuerza a agotar el plazo
+    test(`command with totalMs=${describeBadValue(bad)} responds and does not hang`, async () => {
+        const scale = await createLineScale({ S: null }); // never answers -> forces the deadline to be exhausted
         const link = linkTo(scale.port);
         try {
             await link.connect();
@@ -157,13 +157,13 @@ for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
             const lines = await Promise.race([
                 link.command('S', { totalMs: bad }),
                 new Promise((_, reject) => setTimeout(
-                    () => reject(new Error('command() no respondio a tiempo: se colgo')),
+                    () => reject(new Error('command() did not respond in time: it hung')),
                     4000,
                 )),
             ]);
             const elapsed = Date.now() - started;
             assert.deepEqual(lines, []);
-            assert.ok(elapsed < 4000, `tardo ${elapsed}ms`);
+            assert.ok(elapsed < 4000, `took ${elapsed}ms`);
         } finally {
             link.close();
             await scale.close();
@@ -172,7 +172,7 @@ for (const bad of ['10000', NaN, Infinity, 0, -500, {}]) {
 }
 
 for (const bad of ['80', NaN, Infinity, 0, -50, {}]) {
-    test(`command con quietMs=${describeBadValue(bad)} responde y no cuelga`, async () => {
+    test(`command with quietMs=${describeBadValue(bad)} responds and does not hang`, async () => {
         const scale = await createLineScale({ S: 'S S 1.000 kg' });
         const link = linkTo(scale.port);
         try {
@@ -180,7 +180,7 @@ for (const bad of ['80', NaN, Infinity, 0, -50, {}]) {
             const lines = await Promise.race([
                 link.command('S', { quietMs: bad, totalMs: 1500 }),
                 new Promise((_, reject) => setTimeout(
-                    () => reject(new Error('command() no respondio a tiempo: se colgo')),
+                    () => reject(new Error('command() did not respond in time: it hung')),
                     4000,
                 )),
             ]);
@@ -192,7 +192,7 @@ for (const bad of ['80', NaN, Infinity, 0, -50, {}]) {
     });
 }
 
-test('connect contra un puerto cerrado lanza ScaleError connect', async () => {
+test('connect against a closed port throws ScaleError connect', async () => {
     const link = linkTo(1);
     await assert.rejects(() => link.connect(), (err) => {
         assert.ok(err instanceof ScaleError);
@@ -201,7 +201,7 @@ test('connect contra un puerto cerrado lanza ScaleError connect', async () => {
     });
 });
 
-test('si la bascula cierra a media lectura es error de protocolo', async () => {
+test('if the scale closes mid-read it is a protocol error', async () => {
     const scale = await createRawScale((chunk, socket) => {
         socket.write('S S 1.2');
         setTimeout(() => socket.destroy(), 30);
@@ -219,7 +219,7 @@ test('si la bascula cierra a media lectura es error de protocolo', async () => {
     }
 });
 
-test('close es idempotente y deja connected en false', async () => {
+test('close is idempotent and leaves connected as false', async () => {
     const scale = await createLineScale({ S: 'S S 0.000 kg' });
     const link = linkTo(scale.port);
     await link.connect();
@@ -230,7 +230,7 @@ test('close es idempotente y deja connected en false', async () => {
     await scale.close();
 });
 
-test('command reconecta solo si no hay socket', async () => {
+test('command reconnects only if there is no socket', async () => {
     const scale = await createLineScale({ S: 'S S 0.000 kg' });
     const link = linkTo(scale.port);
     try {
@@ -243,7 +243,7 @@ test('command reconecta solo si no hay socket', async () => {
     }
 });
 
-test('acepta \\r como terminador para modelos que lo usan', async () => {
+test('accepts \\r as a terminator for models that use it', async () => {
     const scale = await createRawScale((chunk, socket) => {
         if (chunk.toString('latin1') === 'S\r') socket.write('S S 1.000 kg\r');
     });
@@ -257,14 +257,14 @@ test('acepta \\r como terminador para modelos que lo usan', async () => {
     }
 });
 
-test('dos comandos simultaneos sobre el mismo link: exactamente uno se lleva la linea, el otro se queda vacio', async () => {
-    // La bascula solo contesta al primer envio que le llega; cualquier envio
-    // posterior no recibe respuesta. Decision de diseno (a falta de otra senal
-    // para desempatar): cuando dos _readLines() solapados compiten por la misma
-    // linea, exactamente una de las dos llamadas debe quedarsela intacta y la
-    // otra debe resolver [] -- igual que "la bascula no contesto a esta". Lo que
-    // NUNCA debe pasar es que ambas la vean (duplicado) o que ninguna la vea
-    // (perdida) o que llegue partida entre las dos.
+test('two simultaneous commands over the same link: exactly one gets the line, the other stays empty', async () => {
+    // The scale only answers the first send that reaches it; any later send
+    // gets no response. Design decision (in the absence of another signal to
+    // break the tie): when two overlapping _readLines() calls compete for the
+    // same line, exactly one of the two calls must keep it intact and the
+    // other must resolve to [] -- the same as "the scale didn't answer this
+    // one". What must NEVER happen is that both see it (duplicate), neither
+    // sees it (lost), or it arrives split between the two.
     let replied = false;
     const scale = await createRawScale((chunk, socket) => {
         if (!replied) {
@@ -279,9 +279,9 @@ test('dos comandos simultaneos sobre el mismo link: exactamente uno se lleva la 
         const results = [a, b];
         const withLine = results.filter((r) => r.length > 0);
         const empty = results.filter((r) => r.length === 0);
-        assert.equal(withLine.length, 1, 'exactamente una de las dos llamadas debe llevarse la linea');
+        assert.equal(withLine.length, 1, 'exactly one of the two calls must get the line');
         assert.deepEqual(withLine[0], ['S S 1.234 kg']);
-        assert.equal(empty.length, 1, 'la otra debe quedarse vacia, no con una mezcla ni un duplicado');
+        assert.equal(empty.length, 1, 'the other must stay empty, not with a mix or a duplicate');
         assert.deepEqual(empty[0], []);
     } finally {
         link.close();
@@ -289,12 +289,13 @@ test('dos comandos simultaneos sobre el mismo link: exactamente uno se lleva la 
     }
 });
 
-test('close() a media lectura resuelve enseguida y conserva lo ya recibido, sin unhandledRejection', async () => {
-    // La bascula contesta una vez y luego calla. Se llama a close() mientras el
-    // comando todavia esta en su hueco de silencio (quietMs=300, muy por debajo
-    // de totalMs=3000). Debe resolver ya, con la linea que ya habia llegado
-    // (close() cancela la lectura, no la descarta), y sin dejar escapar ningun
-    // unhandledRejection (una cancelacion nunca debe rechazar).
+test('close() mid-read resolves right away and keeps what was already received, without an unhandledRejection', async () => {
+    // The scale answers once and then goes quiet. close() is called while the
+    // command is still in its silence gap (quietMs=300, well below
+    // totalMs=3000). It must resolve right away, with the line that had already
+    // arrived (close() cancels the read, it doesn't discard it), and without
+    // letting any unhandledRejection slip through (a cancellation must never
+    // reject).
     const scale = await createRawScale((chunk, socket) => {
         socket.write('S S 1.234 kg\r\n');
     });
@@ -309,41 +310,41 @@ test('close() a media lectura resuelve enseguida y conserva lo ya recibido, sin 
         await link.connect();
         const started = Date.now();
         const pending = link.command('S');
-        await new Promise((r) => setTimeout(r, 40)); // deja que la linea llegue y se acumule
+        await new Promise((r) => setTimeout(r, 40)); // let the line arrive and accumulate
         link.close();
         const lines = await pending;
         const elapsed = Date.now() - started;
-        assert.deepEqual(lines, ['S S 1.234 kg'], 'close() no deberia tirar lo ya recibido');
-        assert.ok(elapsed < 200, `tardo ${elapsed}ms, deberia resolver al cerrar (no agotar totalMs=3000 ni quietMs=300)`);
-        await new Promise((r) => setTimeout(r, 20)); // deja aflorar un unhandledRejection tardio si lo hubiera
-        assert.equal(unhandled, null, 'una lectura cancelada por close() no deberia rechazar nunca');
+        assert.deepEqual(lines, ['S S 1.234 kg'], 'close() should not throw away what was already received');
+        assert.ok(elapsed < 200, `took ${elapsed}ms, should resolve on close (not exhaust totalMs=3000 nor quietMs=300)`);
+        await new Promise((r) => setTimeout(r, 20)); // let a late unhandledRejection surface if there was one
+        assert.equal(unhandled, null, 'a read cancelled by close() should never reject');
     } finally {
         process.off('unhandledRejection', onUnhandled);
         await scale.close();
     }
 });
 
-test('close() a media lectura con respuesta multilinea conserva TODAS las lineas ya recibidas', async () => {
-    // Reproduce el escenario de la revision: la primera linea llega al momento
-    // y una segunda linea llega mientras la ventana de silencio (quietMs)
-    // todavia esta abierta. En ese instante this._absorb ya ha puesto la
-    // segunda linea en this.pending, pero el tick de _readLines todavia no la
-    // ha drenado hacia su ctx.lines local (esta esperando el hueco de
-    // silencio). close() se llama justo ahi. Si close() vaciara this.pending
-    // antes de sincronizarlo con la lectura en curso, esta segunda linea se
-    // perderia en silencio -- el bug que este test reproduce.
+test('close() mid-read with a multiline response keeps ALL the lines already received', async () => {
+    // Reproduces the review scenario: the first line arrives immediately
+    // and a second line arrives while the silence window (quietMs) is still
+    // open. At that instant this._absorb has already put the second line in
+    // this.pending, but the _readLines tick has not yet drained it into its
+    // local ctx.lines (it is waiting on the silence gap). close() is called
+    // right there. If close() emptied this.pending before syncing it with the
+    // read in progress, this second line would be lost silently -- the bug
+    // this test reproduces.
     //
-    // Margenes de tiempo (deliberadamente generosos: son temporizadores
-    // reales, no un reloj simulado):
-    //  - la segunda linea llega a los 150ms;
-    //  - close() se llama a los 300ms, 150ms despues de que la segunda linea
-    //    ya esta en this.pending (margen de sobra para descartar que close()
-    //    llegue "demasiado pronto" y la linea aun no haya sido absorbida);
-    //  - la ventana natural de silencio (quietMs=500 tras la segunda linea)
-    //    no venceria por si sola hasta los 150+500=650ms, muy por encima de
-    //    los 300ms del close() (margen de sobra para descartar que el test
-    //    pase "por casualidad" porque la ventana expiro sola en vez de por
-    //    la cancelacion).
+    // Timing margins (deliberately generous: these are real timers, not a
+    // simulated clock):
+    //  - the second line arrives at 150ms;
+    //  - close() is called at 300ms, 150ms after the second line is already
+    //    in this.pending (plenty of margin to rule out close() arriving "too
+    //    soon" before the line has even been absorbed);
+    //  - the silence window's natural expiry (quietMs=500 after the second
+    //    line) would not fire on its own until 150+500=650ms, well past the
+    //    300ms of close() (plenty of margin to rule out the test passing "by
+    //    coincidence" because the window expired on its own instead of
+    //    because of the cancellation).
     const scale = await createRawScale((chunk, socket) => {
         socket.write('S S 1.234 kg\r\n');
         setTimeout(() => socket.write('S S 1.235 kg\r\n'), 150);
@@ -361,11 +362,11 @@ test('close() a media lectura con respuesta multilinea conserva TODAS las lineas
         assert.deepEqual(
             lines,
             ['S S 1.234 kg', 'S S 1.235 kg'],
-            'close() no deberia tirar la segunda linea, ya absorbida cuando se llamo',
+            'close() should not throw away the second line, already absorbed when it was called',
         );
         assert.ok(
             elapsed < 450,
-            `tardo ${elapsed}ms, deberia resolver al cerrar (~300ms) y no esperar a la ventana natural (~650ms)`,
+            `took ${elapsed}ms, should resolve on close (~300ms) and not wait for the natural window (~650ms)`,
         );
     } finally {
         await scale.close();

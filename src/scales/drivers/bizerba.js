@@ -3,13 +3,13 @@ const { toGrams } = require('../units');
 
 const ETX = '\x03';
 
-// Direccionamiento del equipo. Estos son los valores que funcionan hoy en
-// produccion. El significado exacto de los tres campos (emisor, receptor,
-// subdireccion u otra combinacion) no esta confirmado porque no hay documentacion
-// BCP a mano; se dejan como tres tokens y se les pondra nombre cuando la haya.
+// Device addressing. These are the values that work today in production. The
+// exact meaning of the three fields (sender, receiver, sub-address, or some
+// other combination) is not confirmed because there is no BCP documentation
+// at hand; they are left as three tokens and will be named once there is.
 const DEFAULT_ADDRESS_PREFIX = ['0', '254', '001'];
 
-// Cuerpos de las cinco tramas, tal como estaban en ScaleController del SGA.
+// Bodies of the five telegrams, as they were in the SGA's ScaleController.
 const TELEGRAMS = Object.freeze({
     info: 'I?GV05|LX02',
     tare: 'I!GX05',
@@ -18,48 +18,49 @@ const TELEGRAMS = Object.freeze({
     platform: (n) => `I!LV01|GW01|${n}|LX02`,
 });
 
-// Campo de la respuesta -> clave de peso.
+// Response field -> weight key.
 const FIELD_MAP = Object.freeze({ GD01: 'net', GD02: 'tare', GD07: 'gross' });
 
-// Un campo de addressPrefix acaba dentro de la trama entre dos ETX (o entre el
-// ultimo ETX y el \r\n final que anade TcpLink). Si contuviera el propio ETX o
-// un CR/LF podria cerrar el campo antes de tiempo o cerrar la trama entera y
-// abrir una segunda: quien controle addressPrefix podria colar un comando
-// distinto en el mismo envio. Se rechaza tambien cualquier otro caracter de
-// control (0x00-0x1F, 0x7F): un direccionamiento no tiene motivo para llevar
-// caracteres no imprimibles, y aceptarlos "por si acaso" es la misma clase de
-// descuido. Un campo vacio se rechaza igual: colapsaria dos delimitadores en
-// uno y desplazaria que campo es cual. Se rechaza en vez de sanear (a
-// diferencia del texto de pantalla del driver Mettler) porque una direccion
-// corregida en silencio no es una direccion: hablaria con la bascula
-// equivocada, o con ninguna, sin que quien lo configuro se entere.
+// An addressPrefix field ends up inside the telegram between two ETX (or
+// between the last ETX and the final \r\n that TcpLink appends). If it
+// contained ETX itself, or a CR/LF, it could close the field early or close
+// the whole telegram and open a second one: whoever controls addressPrefix
+// could slip a different command into the same send. Any other control
+// character (0x00-0x1F, 0x7F) is rejected too: an address has no reason to
+// carry non-printable characters, and accepting them "just in case" is the
+// same kind of carelessness. An empty field is rejected the same way: it
+// would collapse two delimiters into one and shift which field is which. It
+// is rejected instead of sanitised (unlike the Mettler driver's display
+// text) because a silently corrected address is not an address: it would
+// talk to the wrong scale, or to none at all, without whoever configured it
+// finding out.
 // eslint-disable-next-line no-control-regex
 const INVALID_ADDRESS_CHARS = /[\x00-\x1F\x7F]/;
 
 /**
- * Valida un elemento de addressPrefix y lo devuelve tal cual, para que
- * buildTelegram construya la trama uniendo ESE valor devuelto — nunca el
- * array original del llamador. Round 1 validaba sobre un string derivado
- * pero serializaba con `prefix.join(ETX)` sobre el array de entrada, y las
- * dos conversiones no coincidian (p.ej. `null`/`undefined` colapsaban a
- * campo vacio en el join aunque `String(null)` pasara la validacion, y un
- * hueco de array disperso ni siquiera llamaba al validador via `forEach`).
- * La correccion estructural de round 2 fue normalizar una sola vez, con
- * acceso directo por indice (`prefix[i]`, que da `undefined` para un hueco),
- * y validar y serializar sobre ese mismo valor.
+ * Validates one addressPrefix element and returns it as-is, so that
+ * buildTelegram builds the telegram by joining THAT returned value — never
+ * the caller's original array. Round 1 validated against a derived string
+ * but serialised with `prefix.join(ETX)` over the input array, and the two
+ * conversions did not agree (e.g. `null`/`undefined` collapsed to an empty
+ * field in the join even though `String(null)` passed validation, and a
+ * sparse array hole was not even passed to the validator via `forEach`).
+ * Round 2's structural fix was to normalise once, with direct index access
+ * (`prefix[i]`, which gives `undefined` for a hole), and validate and
+ * serialise over that same value.
  *
- * Round 2 seguia coaccionando cualquier tipo a string con `String(raw)`, lo
- * que colaba un numero como `1` para el campo que en produccion es `'001'`:
- * `String(1) === '1'`, sin el cero de relleno, con el mismo resultado
- * practico que un campo mal escrito a mano — direccionamiento incorrecto,
- * sin ningun error ni nada visiblemente raro en la trama. Aceptar `null`,
- * `undefined` y cadenas vacias como errores pero coaccionar numeros en
- * silencio era inconsistente con la filosofia "rechazar en vez de corregir en
- * silencio" que motiva todo este validador. Por eso ahora solo se acepta
- * `typeof raw === 'string'`: cualquier otro tipo (number, boolean, object,
- * array, `null`, `undefined`, o un wrapper `new String(...)`, cuyo `typeof`
- * es `'object'`) se rechaza con un mensaje que pide explicitamente la forma
- * string con el cero de relleno.
+ * Round 2 still coerced any type to a string with `String(raw)`, which let a
+ * number like `1` slip through for a field that in production is `'001'`:
+ * `String(1) === '1'`, without the leading zero, with the same practical
+ * result as a field mistyped by hand — incorrect addressing, with no error
+ * and nothing visibly odd in the telegram. Accepting `null`, `undefined` and
+ * empty strings as errors while silently coercing numbers was inconsistent
+ * with the "reject instead of silently correct" philosophy that motivates
+ * this whole validator. That is why only `typeof raw === 'string'` is now
+ * accepted: any other type (number, boolean, object, array, `null`,
+ * `undefined`, or a `new String(...)` wrapper, whose `typeof` is `'object'`)
+ * is rejected with a message that explicitly asks for the string form with
+ * the leading zero.
  */
 function normalizeAddressElement(raw, index) {
     if (typeof raw !== 'string') {
@@ -75,19 +76,20 @@ function normalizeAddressElement(raw, index) {
 }
 
 function buildTelegram(body, options = {}) {
-    // `options` puede llegar `null` (el SGA manda `"options": null` cuando el
-    // operador no toco nada, no `{}` ni el campo ausente): el valor por
-    // defecto del parametro solo actua sobre `undefined`, asi que un
-    // `options.addressPrefix` directo revienta con un TypeError ("Cannot read
-    // properties of null") que /scale/* devolveria como 500 en vez de tratar
-    // null igual que "sin opciones". El encadenamiento opcional cubre los dos
-    // casos (options ausente u options null) sin necesitar una rama aparte.
+    // `options` may arrive as `null` (the SGA sends `"options": null` when the
+    // operator hasn't touched anything, not `{}` nor the field being absent):
+    // the parameter's default value only kicks in for `undefined`, so a
+    // direct `options.addressPrefix` blows up with a TypeError ("Cannot read
+    // properties of null") that /scale/* would return as a 500 instead of
+    // treating null the same as "no options". Optional chaining covers both
+    // cases (options absent or options null) without needing a separate
+    // branch.
     const prefix = options?.addressPrefix || DEFAULT_ADDRESS_PREFIX;
     if (!Array.isArray(prefix) || prefix.length !== 3) {
         throw new ScaleError('protocol', 'addressPrefix debe tener exactamente tres campos', { addressPrefix: prefix });
     }
-    // Acceso directo por indice (no forEach/map sobre el array del llamador):
-    // asi un hueco disperso lee como undefined y no se salta la validacion.
+    // Direct index access (no forEach/map over the caller's array): this way
+    // a sparse hole reads as undefined and doesn't skip validation.
     const normalized = [0, 1, 2].map((index) => normalizeAddressElement(prefix[index], index));
     return `${normalized.join(ETX)}${ETX}${body}`;
 }
@@ -101,13 +103,13 @@ async function ask(link, body, options) {
 }
 
 /**
- * Extrae neto, tara y bruto de una respuesta tipo
+ * Extracts net, tare and gross weight from a response like
  * `I!LV01|GD01|kg;-3;1234|GD02|kg;-3;50|GD07|kg;-3;1284|LX02`.
  *
- * Cada campo se contesta con un triplete `unidad;exponente;valor`: la magnitud
- * real es valor * 10^exponente en la unidad indicada. Un campo ausente o con
- * triplete incompleto queda a null, no a cero: no es lo mismo "pesa cero" que
- * "no me lo ha dicho".
+ * Each field answers with a triplet `unit;exponent;value`: the actual
+ * magnitude is value * 10^exponent in the given unit. A missing field, or one
+ * with an incomplete triplet, is left as null, not zero: "it weighs zero" is
+ * not the same thing as "it didn't tell me".
  */
 function parseWeights(response) {
     const weights = { net: null, tare: null, gross: null };
@@ -120,15 +122,15 @@ function parseWeights(response) {
         if (triplet.length < 3) return;
         const [unit, exponent, value] = triplet;
         if (!/^[+-]?\d+(\.\d+)?$/.test(value)) return;
-        // El exponente es siempre entero (puede ser legitimamente negativo,
-        // p.ej. -3 para gramos desde una base en kg): un triplete como
-        // `kg;abc;1234` o `kg;1.5;1234` hacia que `Number(exponent)` diera
-        // NaN, y `10 ** NaN` es NaN, que JSON.stringify serializa como
-        // `null` -- el campo quedaba con la MISMA forma que "ausente", pero
-        // por una razon distinta (dato corrupto, no dato que falta) y sin que
-        // nada lo distinguiera. Se valida con el mismo rigor que value, y si
-        // no pasa se trata igual que cualquier otro triplete malformado: el
-        // campo se queda a null en vez de forzar un valor derivado de basura.
+        // The exponent is always an integer (it may legitimately be negative,
+        // e.g. -3 for grams from a kg base): a triplet like `kg;abc;1234` or
+        // `kg;1.5;1234` made `Number(exponent)` come out as NaN, and
+        // `10 ** NaN` is NaN, which JSON.stringify serialises as `null` -- the
+        // field ended up with the SAME shape as "absent", but for a different
+        // reason (corrupt data, not missing data) with nothing to tell them
+        // apart. It is validated with the same rigor as value, and if it
+        // doesn't pass it is treated like any other malformed triplet: the
+        // field is left at null instead of forcing a value derived from junk.
         if (!/^[+-]?\d+$/.test(exponent)) return;
         weights[key] = toGrams(Number(value), unit, Number(exponent));
     });
@@ -144,22 +146,24 @@ const driver = {
 
     capabilities: ['weigh', 'tare', 'clearTare', 'info', 'selectPlatform'],
 
-    // Puesta a cero, texto en display, pitido y pesada guiada no estan aqui a
-    // proposito: no hay documentacion BCP para esas operaciones y no se inventan
-    // tramas. El registro hace que respondan 501 sin abrir socket.
+    // Zeroing, display text, beep and guided weighing are deliberately not
+    // here: there is no BCP documentation for those operations and no
+    // telegrams are being invented. The registry makes them answer 501
+    // without opening a socket.
     deviceDependent: [],
 
-    // Sin overrides de modelo. El main.js original llevaba esta observacion,
-    // citada aqui tal cual porque es la unica pista que queda de por que
-    // alguien penso que hacia falta distinguir por modelo:
+    // No model overrides. The original main.js carried this observation,
+    // quoted here as-is because it is the only clue left as to why someone
+    // thought a per-model distinction was needed:
     //   // Las IS30 suelen usar terminación \r o \r\n
     //   (037efa7:main.js:234)
-    // Es un "suelen", no una confirmacion, y \r\n es el valor que funciona hoy
-    // en produccion por la ruta heredada: forzar \r para is30 dejaria muda una
-    // bascula que funciona. Lo que zanjaria esto es una IS30 real (o su manual
-    // BCP) confirmando el terminador que realmente usa; hasta entonces, un
-    // modelo sin override usa la linea base, que es lo correcto mientras no
-    // haya evidencia mejor. No se anade override sin esa confirmacion.
+    // That is an "usually", not a confirmation, and \r\n is the value that
+    // works today in production via the legacy path: forcing \r for is30
+    // would silence a scale that currently works. What would settle this is
+    // a real IS30 (or its BCP manual) confirming the terminator it actually
+    // uses; until then, a model without an override uses the baseline, which
+    // is the right call while there is no better evidence. No override is
+    // added without that confirmation.
     models: {},
 
     async weigh(link, { options } = {}) {
@@ -168,8 +172,9 @@ const driver = {
         return {
             data: {
                 ...weights,
-                // La trama de pesos solo se contesta con el peso ya asentado, asi
-                // que no hay un equivalente al estado dinamico de MT-SICS.
+                // The weight telegram is only answered once the weight has
+                // already settled, so there is no equivalent to MT-SICS's
+                // dynamic state.
                 stable: true,
             },
             raw: lines,
@@ -191,8 +196,8 @@ const driver = {
                 model: null,
                 capacity: null,
                 serial: null,
-                // Sin documentacion BCP no se descompone: se entrega crudo y que
-                // decida quien sepa leerlo.
+                // Without BCP documentation it isn't parsed apart: it is
+                // handed over raw for whoever knows how to read it to decide.
                 raw_info: lines.join(''),
             },
             raw: lines,
