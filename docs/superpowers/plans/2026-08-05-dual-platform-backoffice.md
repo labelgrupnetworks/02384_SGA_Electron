@@ -279,7 +279,9 @@ Expected: todo verde. Anota los números reales.
 - [ ] **Step 8: Estilo y commit**
 
 ```bash
-./vendor/bin/pint app/Modules/SGA/Models/Scale.php app/Modules/SGA/database/migrations
+# Pint por FICHERO, nunca por directorio: apuntar a un directorio de migraciones
+# reformatea decenas de ficheros ajenos preexistentes.
+./vendor/bin/pint app/Modules/SGA/Models/Scale.php app/Modules/SGA/database/migrations/2026_08_05_100000_add_secondary_scale_to_scales_table.php
 git status --short
 git add app/Modules/SGA/database/migrations/2026_08_05_100000_add_secondary_scale_to_scales_table.php app/Modules/SGA/Models/Scale.php tests/Feature/Modules/SGA/ScaleSecondaryLinkTest.php
 git commit -m "feat(sga): link a secondary scale as platform 2
@@ -623,7 +625,8 @@ Expected: todo verde, números reales en el informe.
 - [ ] **Step 9: Estilo y commit**
 
 ```bash
-./vendor/bin/pint app/Modules/SGA/Rules app/Modules/SGA/Http/Requests/Scale app/Modules/SGA/UseCases/Scale app/Modules/SGA/Http/Controllers/Admin/ScaleController.php
+# Pint por FICHERO, nunca por directorio: un directorio arrastra ficheros ajenos.
+./vendor/bin/pint app/Modules/SGA/Rules/SecondaryScaleIsLinkable.php app/Modules/SGA/Http/Requests/Scale/StoreRequest.php app/Modules/SGA/Http/Requests/Scale/UpdateRequest.php app/Modules/SGA/UseCases/Scale/StoreUseCase.php app/Modules/SGA/UseCases/Scale/UpdateUseCase.php app/Modules/SGA/Http/Controllers/Admin/ScaleController.php
 git status --short
 git add app/Modules/SGA/Rules/SecondaryScaleIsLinkable.php app/Modules/SGA/Http/Requests/Scale/StoreRequest.php app/Modules/SGA/Http/Requests/Scale/UpdateRequest.php app/Modules/SGA/UseCases/Scale/StoreUseCase.php app/Modules/SGA/UseCases/Scale/UpdateUseCase.php app/Modules/SGA/Http/Controllers/Admin/ScaleController.php app/Modules/SGA/lang/es/messages.php app/Modules/SGA/lang/en/messages.php tests/Feature/Modules/SGA/ScaleSecondaryValidationTest.php
 git commit -m "feat(sga): validate that a secondary scale is linkable
@@ -1133,7 +1136,7 @@ Abre `/admin/scales`, crea dos básculas Mettler en el mismo puesto ("Pequeña" 
 php artisan test --filter="ScaleSecondary|ScaleFindScale|ScaleBrandMigration|ScaleForm|ScaleGateway|ScaleWeightParser"
 ./vendor/bin/pint app/Modules/SGA/Http/Controllers/Admin/ScaleController.php
 git status --short
-git add app/Modules/SGA/resources/views app/Modules/SGA/Http/Controllers/Admin/ScaleController.php app/Modules/SGA/lang tests/Feature/Modules/SGA/ScaleSecondaryFormTest.php
+git add app/Modules/SGA/resources/views/riho/admin/scales/_partials/form-content.blade.php app/Modules/SGA/resources/views/admin/scales/create.blade.php app/Modules/SGA/resources/views/admin/scales/edit.blade.php app/Modules/SGA/Http/Controllers/Admin/ScaleController.php app/Modules/SGA/lang/es/cruds/scale.php app/Modules/SGA/lang/en/cruds/scale.php tests/Feature/Modules/SGA/ScaleSecondaryFormTest.php
 git commit -m "feat(sga): offer the platform 2 link in the scale form
 
 Linking is offered on edit only: the secondary has to exist first, and the
