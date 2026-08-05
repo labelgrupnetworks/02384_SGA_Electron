@@ -30,6 +30,10 @@ module.exports = {
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
+      // win32 only: on Linux this maker needs wine and mono, so without the
+      // constraint `npm run make` tries to build the Windows installer wherever
+      // it runs. This is the artifact the GitHub auto-updater actually consumes.
+      platforms: ['win32'],
       config: {
         name: "VerentiaIP",
         setupExe: "VerentiaIP-Setup.exe", // Nombre más estándar
@@ -51,6 +55,7 @@ module.exports = {
     },
     {
       name: '@electron-forge/maker-deb',
+      platforms: ['linux'],
       config: {
         name: "verentia-ip",
         productName: "VerentiaIP",
@@ -58,15 +63,16 @@ module.exports = {
         homepage: "https://github.com/labelgrupnetworks/02384_SGA_Electron"
       }
     },
-    {
-      name: '@electron-forge/maker-rpm',
-      config: {
-        name: "verentia-ip",
-        productName: "VerentiaIP",
-        maintainer: "LabelGrup Networks",
-        homepage: "https://github.com/labelgrupnetworks/02384_SGA_Electron"
-      }
-    }
+    // The rpm maker was removed on purpose. It requires the `rpmbuild` binary,
+    // and Forge resolves every target before building any of them, so a missing
+    // rpmbuild aborted `npm run make` on Linux before it could produce the .deb —
+    // the artifact for the platform actually being built. With rpm gone, the
+    // default `npm run make` builds the host platform's target everywhere: the
+    // .deb on Linux, the Squirrel installer on Windows.
+    //
+    // To bring it back: reinstate a '@electron-forge/maker-rpm' entry with
+    // platforms: ['linux'] and the same config as the deb maker above, and
+    // install rpmbuild on every machine that runs a build.
   ],
   publishers: [
     {
