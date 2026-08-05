@@ -8,12 +8,22 @@ module.exports = {
     icon: './icon', // Forge añade automáticamente la extensión (.ico en Windows)
     appBundleId: "com.labelgrup.verentia",
     executableName: "VerentiaIP",
-    // Forge empaqueta el directorio de trabajo tal cual, no lo que este en git:
-    // `.superpowers/` (notas internas de la revision, con IPs de piso de planta
-    // como 192.168.0.86) no estaba en esta lista y se colaba entera (~1.2MB) en
-    // el paquete final, visible para cualquiera que abra el .asar instalado.
+    // Forge packages the working directory as it is on disk, NOT what git tracks,
+    // so .gitignore does not protect anything here.
+    //
+    // Every dot-entry at the project root is excluded as a class rather than
+    // enumerated, because the enumerated list kept going stale as new tooling
+    // added directories. Concretely it covers: .codegraph/ (whose daemon.sock is
+    // a unix socket, and the packager aborts outright with "Cannot copy a socket
+    // file"), .claude/ and .superpowers/ (local agent config and internal review
+    // notes containing shop-floor IPs), .DS_Store, and a future .env — which
+    // holds the GITHUB_TOKEN used for publishing and must never ship.
+    //
+    // Nothing the app needs at runtime is hidden: main.js, preload.js,
+    // splash.html and icon.png are all at the root unprefixed.
     ignore: [
-      /^\/(\.git|\.vscode|\.idea|docs|test|tests|publish\.js|\.superpowers)($|\/)/
+      /^\/\.[^/]+($|\/)/,
+      /^\/(docs|test|tests|publish\.js)($|\/)/
     ]
   },
   rebuildConfig: {},
