@@ -7,6 +7,9 @@ const http = require("http");
 const { Server } = require("socket.io");
 const { registerLegacyRoutes } = require("./src/server/legacy-routes");
 const { registerScaleRoutes } = require("./src/server/scale-routes");
+const { createStore } = require("./src/config/store");
+const { resolveLocalIp } = require("./src/network/resolve");
+const { registerIpRoute } = require("./src/server/ip-route");
 
 // Migración a update-electron-app
 const { updateElectronApp, UpdateSourceType } = require("update-electron-app");
@@ -176,19 +179,38 @@ function setupAutoLaunch() {
     });
 }
 
-function getIPAddress() {
-    const interfaces = os.networkInterfaces();
-    let ipAddress = "No disponible";
+let configStore = null;
 
-    Object.keys(interfaces).forEach((interfaceName) => {
-        interfaces[interfaceName].forEach((iface) => {
-            if (iface.family === "IPv4" && !iface.internal) {
-                ipAddress = iface.address;
-            }
-        });
+function getConfigStore() {
+    if (!configStore) {
+        configStore = createStore(app.getPath("userData"), logger);
+    }
+    return configStore;
+}
+
+// The single place the rest of main.js asks "what is our address".
+function localIp() {
+    return resolveLocalIp({
+        interfaces: os.networkInterfaces(),
+        store: getConfigStore(),
     });
+}
 
-    return ipAddress;
+// Human-readable state for the tray label. Spanish, like the rest of the UI.
+function describeLocalIp() {
+    const current = localIp();
+
+    switch (current.status) {
+        case "configured":
+        case "single":
+            return `${current.ip} (${current.interface})`;
+        case "stale":
+            return `sin configurar (${current.savedInterface} ya no existe)`;
+        case "no_network":
+            return "sin red";
+        default:
+            return "sin configurar";
+    }
 }
 
 function setupServer() {
@@ -201,19 +223,19 @@ function setupServer() {
         next();
     });
 
-    expressApp.get("/ip", (req, res) => {
-        res.json({ ip: getIPAddress() });
-    });
+    registerIpRoute(expressApp, { resolve: localIp });
 
     registerLegacyRoutes(expressApp, logger);
     registerScaleRoutes(expressApp, logger, { version: app.getVersion() });
 
     io.on("connection", (socket) => {
         logger.info("Cliente conectado");
-        socket.emit("ip-address", { ip: getIPAddress() });
+        const current = localIp();
+        socket.emit("ip-address", { ip: current.ip, status: current.status });
 
         socket.on("get-ip", () => {
-            socket.emit("ip-address", { ip: getIPAddress() });
+            const current = localIp();
+            socket.emit("ip-address", { ip: current.ip, status: current.status });
         });
 
         socket.on("disconnect", () => {
@@ -261,7 +283,7 @@ function createTray() {
     const buildContextMenu = () => {
         return Menu.buildFromTemplate([
             {
-                label: `IP actual: ${getIPAddress()}`,
+                label: `IP actual: ${describeLocalIp()}`,
                 enabled: false,
             },
             {
