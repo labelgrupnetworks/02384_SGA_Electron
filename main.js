@@ -213,6 +213,77 @@ function describeLocalIp() {
     }
 }
 
+let interfaceWindow = null;
+
+ipcMain.handle("get-interface-choice", () => {
+    const current = localIp();
+    return {
+        candidates: current.candidates || [],
+        reason: current.status,
+        savedInterface: current.savedInterface || null,
+    };
+});
+
+ipcMain.handle("choose-interface", (event, name) => {
+    const current = localIp();
+    const candidates = current.candidates || [];
+
+    // Only ever store a name the machine actually offers. A renderer sending
+    // anything else would otherwise write a settings file that resolves to stale.
+    if (!candidates.some((c) => c.name === name)) {
+        logger.warn(`⚠️ Interfaz no ofrecida, se ignora: ${name}`);
+        return { saved: false };
+    }
+
+    // write() can throw (EACCES, ENOSPC, EROFS, ...) unlike read(), which never does.
+    // Electron turns a throwing handle callback into a rejected invoke on the
+    // renderer side, so the main process is safe either way, but the dialog's click
+    // handler needs a definite { saved: false } to tell the operator nothing was
+    // stored, rather than an unhandled rejection that leaves the window looking stuck.
+    try {
+        getConfigStore().write({ interface: name });
+    } catch (error) {
+        logger.error(`❌ No se pudo guardar la interfaz elegida (${name}): ${error.message}`);
+        return { saved: false };
+    }
+
+    logger.info(`✅ Interfaz de red elegida: ${name}`);
+
+    if (interfaceWindow) {
+        interfaceWindow.close();
+    }
+    if (tray) {
+        tray.setContextMenu(buildTrayMenu());
+    }
+
+    return { saved: true };
+});
+
+function openInterfaceWindow() {
+    if (interfaceWindow) {
+        interfaceWindow.focus();
+        return;
+    }
+
+    interfaceWindow = new BrowserWindow({
+        width: 460,
+        height: 380,
+        resizable: false,
+        center: true,
+        title: "Interfaz de red",
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            preload: path.join(__dirname, "preload.js"),
+        },
+    });
+
+    interfaceWindow.loadFile("select-interface.html");
+    interfaceWindow.on("closed", () => {
+        interfaceWindow = null;
+    });
+}
+
 function setupServer() {
     // Middleware para parsear JSON - DEBE ir ANTES de las rutas
     expressApp.use(express.json());
@@ -276,74 +347,83 @@ function hideSplashWindow() {
     }
 }
 
+// Moved to module scope (was a closure inside createTray()) so that
+// choose-interface can rebuild the menu after a successful save without
+// having to duplicate the template here.
+function buildTrayMenu() {
+    return Menu.buildFromTemplate([
+        {
+            label: `IP actual: ${describeLocalIp()}`,
+            enabled: false,
+        },
+        {
+            label: "🌐 Cambiar interfaz de red",
+            click: () => {
+                openInterfaceWindow();
+            },
+        },
+        {
+            label: `Versión: ${app.getVersion()}`,
+            enabled: false,
+        },
+        {
+            label: `Última verificación: ${
+                updateStatus.lastCheck
+                    ? updateStatus.lastCheck.toLocaleTimeString()
+                    : "Nunca"
+            }`,
+            enabled: false,
+        },
+        {
+            type: "separator",
+        },
+        {
+            label: "📊 Estado del actualizador",
+            click: () => {
+                showUpdateStatus();
+            },
+        },
+        {
+            label: "🛠️ Abrir DevTools",
+            click: () => {
+                // Crear ventana temporal para ver logs
+                const debugWindow = new BrowserWindow({
+                    width: 800,
+                    height: 600,
+                    webPreferences: {
+                        nodeIntegration: true,
+                        contextIsolation: false,
+                    },
+                });
+                debugWindow.loadURL(
+                    "data:text/html,<h1>Logs en la consola</h1><p>Abre DevTools para ver los logs (F12)</p>"
+                );
+                debugWindow.webContents.openDevTools();
+            },
+        },
+        {
+            type: "separator",
+        },
+        {
+            label: "Salir",
+            click: () => {
+                app.quitting = true;
+                app.quit();
+            },
+        },
+    ]);
+}
+
 function createTray() {
     const iconPath = path.join(__dirname, "icon.png");
     tray = new Tray(iconPath);
 
-    const buildContextMenu = () => {
-        return Menu.buildFromTemplate([
-            {
-                label: `IP actual: ${describeLocalIp()}`,
-                enabled: false,
-            },
-            {
-                label: `Versión: ${app.getVersion()}`,
-                enabled: false,
-            },
-            {
-                label: `Última verificación: ${
-                    updateStatus.lastCheck
-                        ? updateStatus.lastCheck.toLocaleTimeString()
-                        : "Nunca"
-                }`,
-                enabled: false,
-            },
-            {
-                type: "separator",
-            },
-            {
-                label: "📊 Estado del actualizador",
-                click: () => {
-                    showUpdateStatus();
-                },
-            },
-            {
-                label: "🛠️ Abrir DevTools",
-                click: () => {
-                    // Crear ventana temporal para ver logs
-                    const debugWindow = new BrowserWindow({
-                        width: 800,
-                        height: 600,
-                        webPreferences: {
-                            nodeIntegration: true,
-                            contextIsolation: false,
-                        },
-                    });
-                    debugWindow.loadURL(
-                        "data:text/html,<h1>Logs en la consola</h1><p>Abre DevTools para ver los logs (F12)</p>"
-                    );
-                    debugWindow.webContents.openDevTools();
-                },
-            },
-            {
-                type: "separator",
-            },
-            {
-                label: "Salir",
-                click: () => {
-                    app.quitting = true;
-                    app.quit();
-                },
-            },
-        ]);
-    };
-
     tray.setToolTip("IP Server - VerentiaIP");
-    tray.setContextMenu(buildContextMenu());
+    tray.setContextMenu(buildTrayMenu());
 
     // Actualizar el menú cada 30 segundos para refrescar la IP y estado
     setInterval(() => {
-        tray.setContextMenu(buildContextMenu());
+        tray.setContextMenu(buildTrayMenu());
     }, 30000);
 }
 
@@ -358,6 +438,16 @@ app.whenReady().then(() => {
     createTray();
     setupServer();
     setupAutoLaunch();
+
+    // Only when there is genuinely something to choose. `single` needs no question,
+    // and `no_network` has nothing to offer — that one is fixed with a cable, not a
+    // dialog, so opening an empty window would only confuse.
+    const startup = localIp();
+    if (startup.status === "not_configured" || startup.status === "stale") {
+        openInterfaceWindow();
+    } else {
+        logger.info(`🌐 IP local: ${describeLocalIp()}`);
+    }
 
     // Configurar el auto-actualizador (forzar también en desarrollo para testing)
     setupAutoUpdater();
