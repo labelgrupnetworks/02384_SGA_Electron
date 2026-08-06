@@ -1044,18 +1044,88 @@ Esta es la única tarea que toca Electron y por tanto **no es testable con `node
 
 - [ ] **Step 1: Crear la ventana de elección**
 
-`select-interface.html`, en la raíz del proyecto junto a `splash.html`, del que puedes copiar el estilo
-para que las dos ventanas se parezcan. Requisitos de contenido:
+`select-interface.html`, en la raíz del proyecto junto a `splash.html`. Los textos van en español, como el
+resto de la interfaz; los comentarios del script en inglés.
 
-- Un título: `Elige la interfaz de red de este puesto`.
-- Una explicación de una frase: que el SGA identifica el puesto por su IP y que hay que decirle cuál usar.
-- Un botón por candidata, mostrando **interfaz e IP juntas**: `enp0s31f6 · 192.168.0.47`. La interfaz sola
-  no le dice nada a un operario y la IP sola no distingue cable de wifi.
-- Cuando el motivo sea `stale`, una línea extra diciendo qué interfaz estaba guardada y ya no está, para
-  que se entienda que algo cambió en el equipo y no que nunca se configuró.
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Interfaz de red</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 24px; background: #f7f7f9; color: #25273d;
+        }
+        h1 { font-size: 17px; margin: 0 0 8px; }
+        p { font-size: 13px; line-height: 1.5; color: #6b6c7e; margin: 0 0 16px; }
+        .stale {
+            font-size: 13px; background: #fff4e5; border: 1px solid #ffd7a0;
+            border-radius: 8px; padding: 10px 12px; margin: 0 0 16px; color: #8a5300;
+        }
+        button {
+            display: block; width: 100%; text-align: left; cursor: pointer;
+            background: #fff; border: 1px solid #d8d9e0; border-radius: 10px;
+            padding: 12px 14px; margin-bottom: 10px; font-size: 14px; color: #25273d;
+        }
+        button:hover { border-color: #0666eb; background: #f3f8ff; }
+        .iface { font-weight: 600; }
+        .addr { color: #6b6c7e; }
+    </style>
+</head>
+<body>
+    <h1>Elige la interfaz de red de este puesto</h1>
+    <p>
+        El SGA identifica este puesto por su direcci&oacute;n IP. Este equipo tiene varias,
+        as&iacute; que hay que indicar cu&aacute;l se usa.
+    </p>
+    <div id="stale" class="stale" style="display: none;"></div>
+    <div id="list"></div>
 
-Recibe los datos por `window.electronAPI.getInterfaceChoice()` y envía la elección con
-`window.electronAPI.chooseInterface(name)`.
+    <script>
+        (async () => {
+            const choice = await window.electronAPI.getInterfaceChoice();
+
+            if (choice.reason === 'stale' && choice.savedInterface) {
+                const stale = document.getElementById('stale');
+                stale.textContent =
+                    'La interfaz elegida antes (' + choice.savedInterface + ') ya no existe en este equipo. '
+                    + 'Elige otra.';
+                stale.style.display = 'block';
+            }
+
+            const list = document.getElementById('list');
+
+            for (const candidate of choice.candidates) {
+                const button = document.createElement('button');
+
+                // Interface and address together: the interface name alone means nothing
+                // to an operator, and the address alone does not distinguish cable from
+                // wifi, which is exactly the choice being made.
+                const iface = document.createElement('span');
+                iface.className = 'iface';
+                iface.textContent = candidate.name;
+
+                const addr = document.createElement('span');
+                addr.className = 'addr';
+                addr.textContent = ' · ' + candidate.address;
+
+                button.append(iface, addr);
+                button.addEventListener('click', () => {
+                    window.electronAPI.chooseInterface(candidate.name);
+                });
+
+                list.appendChild(button);
+            }
+        })();
+    </script>
+</body>
+</html>
+```
+
+Se construyen los botones con `createElement` y `textContent`, no con `innerHTML`, para que un nombre de
+interfaz raro no pueda inyectar marcado en la ventana.
 
 - [ ] **Step 2: Exponer las dos funciones en el preload**
 
