@@ -20,8 +20,11 @@
             padding: 12px 14px; margin-bottom: 10px; font-size: 14px; color: #25273d;
         }
         button:hover { border-color: #0666eb; background: #f3f8ff; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        button:disabled:hover { border-color: #d8d9e0; background: #fff; }
         .iface { font-weight: 600; }
         .addr { color: #6b6c7e; }
+        .current { color: #0666eb; font-weight: 600; }
     </style>
 </head>
 <body>
@@ -47,6 +50,25 @@
 
             const list = document.getElementById('list');
 
+            // Shared by both failure paths below: a resolved {saved:false} and a
+            // rejected invoke look different to the code but must look the same
+            // to the operator.
+            function showSaveFailure() {
+                stale.textContent =
+                    'No se pudo guardar la elección. Inténtalo de nuevo o avisa a soporte.';
+                stale.style.display = 'block';
+            }
+
+            // Blocks a second click from firing a second invoke while the first is
+            // still in flight — an impatient double-click must not race the main
+            // process, which may already be closing this window by the time the
+            // second click would otherwise land.
+            function setButtonsDisabled(disabled) {
+                for (const button of list.querySelectorAll('button')) {
+                    button.disabled = disabled;
+                }
+            }
+
             for (const candidate of choice.candidates) {
                 const button = document.createElement('button');
 
@@ -62,18 +84,41 @@
                 addr.textContent = ' · ' + candidate.address;
 
                 button.append(iface, addr);
-                button.addEventListener('click', async () => {
-                    const result = await window.electronAPI.chooseInterface(candidate.name);
 
-                    // A failed write leaves this window open on purpose: the main
-                    // process already logged why, but the operator standing in front
-                    // of the screen still needs to see that nothing happened. Reusing
-                    // the #stale element (and textContent, never innerHTML) keeps this
-                    // consistent with the rest of the dialog and safe against odd input.
-                    if (!result || !result.saved) {
-                        stale.textContent =
-                            'No se pudo guardar la elección. Inténtalo de nuevo o avisa a soporte.';
-                        stale.style.display = 'block';
+                // Mark which one is currently in effect, so reopening the dialog
+                // from the tray on an already-configured machine does not ask the
+                // operator to choose blind.
+                if (choice.currentInterface && candidate.name === choice.currentInterface) {
+                    const current = document.createElement('span');
+                    current.className = 'current';
+                    current.textContent = ' (en uso)';
+                    button.append(current);
+                }
+
+                button.addEventListener('click', async () => {
+                    setButtonsDisabled(true);
+
+                    try {
+                        const result = await window.electronAPI.chooseInterface(candidate.name);
+
+                        // A failed write leaves this window open on purpose: the main
+                        // process already logged why, but the operator standing in front
+                        // of the screen still needs to see that nothing happened. Reusing
+                        // the #stale element (and textContent, never innerHTML) keeps this
+                        // consistent with the rest of the dialog and safe against odd input.
+                        if (!result || !result.saved) {
+                            showSaveFailure();
+                            setButtonsDisabled(false);
+                        }
+                        // On success the main process closes this window itself.
+                    } catch (error) {
+                        // A rejected invoke (the main process handler threw, or the IPC
+                        // channel itself failed) must reach the operator exactly like a
+                        // resolved {saved:false} does — this is the failure mode
+                        // addition #1's try/catch exists to prevent, reached from the
+                        // renderer side instead of the main-process side.
+                        showSaveFailure();
+                        setButtonsDisabled(false);
                     }
                 });
 

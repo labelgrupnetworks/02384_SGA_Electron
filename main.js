@@ -9,6 +9,7 @@ const { registerLegacyRoutes } = require("./src/server/legacy-routes");
 const { registerScaleRoutes } = require("./src/server/scale-routes");
 const { createStore } = require("./src/config/store");
 const { resolveLocalIp } = require("./src/network/resolve");
+const { listCandidateInterfaces } = require("./src/network/interfaces");
 const { registerIpRoute } = require("./src/server/ip-route");
 
 // Migración a update-electron-app
@@ -217,16 +218,29 @@ let interfaceWindow = null;
 
 ipcMain.handle("get-interface-choice", () => {
     const current = localIp();
+
+    // "What is our address" (localIp/resolveLocalIp) and "what could we choose from"
+    // are different questions. resolveLocalIp only carries a `candidates` list when it
+    // could not decide (not_configured/stale) — on a machine that is already configured
+    // or has a single candidate, that field is absent. The dialog needs the full list
+    // every time it is opened, including from the tray on an already-configured
+    // machine, so it asks the second question directly instead of widening the first.
     return {
-        candidates: current.candidates || [],
+        candidates: listCandidateInterfaces(os.networkInterfaces()),
         reason: current.status,
         savedInterface: current.savedInterface || null,
+        currentInterface: current.interface || null,
     };
 });
 
 ipcMain.handle("choose-interface", (event, name) => {
-    const current = localIp();
-    const candidates = current.candidates || [];
+    // Validated against the full candidate list, not localIp()'s `candidates` —
+    // resolveLocalIp only populates that field when it could not decide
+    // (not_configured/stale). On an already-configured machine it is undefined,
+    // which would make this guard reject every name as "not offered", even a
+    // real one, the moment the dialog (fixed to use the same full list) lets an
+    // operator choose a different interface than the one already saved.
+    const candidates = listCandidateInterfaces(os.networkInterfaces());
 
     // Only ever store a name the machine actually offers. A renderer sending
     // anything else would otherwise write a settings file that resolves to stale.
@@ -249,7 +263,10 @@ ipcMain.handle("choose-interface", (event, name) => {
 
     logger.info(`✅ Interfaz de red elegida: ${name}`);
 
-    if (interfaceWindow) {
+    // A second, near-simultaneous invoke (an impatient double-click before the
+    // first one resolves) can reach here after the window is already mid-destruction
+    // from the first call's close(). Closing an already-destroyed BrowserWindow throws.
+    if (interfaceWindow && !interfaceWindow.isDestroyed()) {
         interfaceWindow.close();
     }
     if (tray) {
