@@ -12,7 +12,15 @@
 
 - **Repo:** `/home/manel/Documentos/02384_SGA_Electron`, rama `feature/mettler-scales`. No crear ramas, no hacer merge, no hacer push.
 - **Cero dependencias nuevas.** Solo `node:test`, `node:assert/strict`, `node:os`, `node:fs`, `node:path` y el `express` ya instalado.
-- **Código y comentarios SIEMPRE en inglés.** Los mensajes de cara al usuario (diálogo, tray) van en español, como el resto de la interfaz de la app.
+- **Código y comentarios SIEMPRE en inglés.**
+- **Traducciones — los dos repositorios NO se comportan igual, y es a propósito:**
+  - **En VerentiaIP (tareas 1 a 5): sin traducción.** Los mensajes de cara al usuario van en español
+    directamente en el código. La app no tiene mecanismo de i18n —no hay directorio de locales ni
+    librería— y sus ~20 cadenas actuales (`"IP actual:"`, `"Salir"`, `"Estado del Actualizador"`,
+    `"Abrir DevTools"`) están así. **No montes i18n aquí**: sería estructura nueva para un solo idioma y
+    ensuciaría el diff de esta feature. Decisión del propietario del repo.
+  - **En el SGA (tarea 6): todo por ficheros de idioma.** Ni una cadena visible en el código. Cada clave
+    en `lang/es` **y** en `lang/en`, con `__()` o `trans()`, siguiendo lo que ya hace el módulo.
 - **Ningún módulo nuevo puede requerir `electron`.** `app.getPath('userData')` se inyecta desde `main.js`; los módulos reciben rutas y datos por parámetro. Es lo que permite probarlos con `node --test` sin Electron, que en esta máquina además está limitado.
 - **`GET /ip` conserva `{ip}` en el caso con respuesta.** Sus dos consumidores actuales (el `getLocalIpFromElectron()` del SGA y `components/ip-detector.blade.php`) leen ese campo y no deben romperse.
 - **No tocar `src/server/legacy-routes.js` ni `test/legacy-routes.test.js`**: superficie de compatibilidad congelada, verificada byte a byte.
