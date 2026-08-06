@@ -223,7 +223,7 @@ function setupServer() {
         next();
     });
 
-    registerIpRoute(expressApp, { resolve: localIp });
+    registerIpRoute(expressApp, { resolve: localIp, logger });
 
     registerLegacyRoutes(expressApp, logger);
     registerScaleRoutes(expressApp, logger, { version: app.getVersion() });
