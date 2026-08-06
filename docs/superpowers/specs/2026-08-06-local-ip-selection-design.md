@@ -1,7 +1,7 @@
 # Elección y persistencia de la interfaz de red en VerentiaIP
 
 Fecha: 2026-08-06
-Repositorio afectado: `02384_SGA_Electron` (VerentiaIP). **El SGA no necesita cambios obligatorios**; ver "Efecto en el SGA".
+Repositorios afectados: `02384_SGA_Electron` (VerentiaIP) y `verentia` (SGA). **El 409 hay que interpretarlo en el backoffice**; ver "Efecto en el SGA".
 
 ## Problema
 
@@ -177,14 +177,35 @@ así que añadir `status` es compatible: quien solo lea `ip` sigue funcionando.
 
 ## Efecto en el SGA
 
-**No hay cambios obligatorios.** `getLocalIpFromElectron()` hace `Http::get(...'/ip')` y devuelve
-`$response->successful() ? $response->json('ip') : null`. Un 409 no es `successful()`, así que ya
-devuelve `null`, y `findScale()` ya trata `null` como "sin puesto". El comportamiento degradado correcto
-sale gratis.
+**El 409 hay que interpretarlo, y no es opcional.** Sin interpretarlo, el backoffice le da al operario una
+instrucción equivocada.
 
-Queda como mejora opcional, **fuera de este spec**, que el SGA lea `reason` y `candidates` del 409 para
-decirle al operario "este puesto no tiene interfaz de red elegida" en vez de caer a captura manual sin
-explicación. Se documenta aquí para que quien lo aborde sepa que el 409 ya trae los datos.
+`components/ip-detector.blade.php` bloquea la pantalla con "Detectando IP" y, en su `.catch`, hace tres
+cosas: muestra "no detectada", **vuelve a mostrar el overlay a pantalla completa** y despliega un área de
+error **con un enlace de descarga**. Ese camino asume una sola causa: que VerentiaIP no está instalado.
+
+Un 409 no es `response.ok`, así que cae por ahí y el operario ve "descarga VerentiaIP" cuando la app
+**está instalada y corriendo** — solo le falta elegir la interfaz. Descargaría, reinstalaría, y seguiría
+igual. El problema no es que falte una explicación, es que se da una instrucción que no arregla nada.
+
+Cambios requeridos en el SGA:
+
+- **`ip-detector.blade.php`** distingue un 409 de un fallo de conexión. Ante un 409 muestra un mensaje
+  propio —que la app funciona pero no tiene interfaz elegida, y que se abre desde la bandeja del sistema
+  para elegirla— y **no ofrece la descarga**. El overlay sigue bloqueando, porque sin IP el puesto no
+  puede trabajar, pero dice qué hacer de verdad. Si el 409 trae `candidates`, listarlas ayuda a que quien
+  esté delante reconozca su equipo.
+- **`getLocalIpFromElectron()`** hoy hace `$response->successful() ? $response->json('ip') : null`. Un 409
+  ya degrada a `null` y `findScale()` lo trata como "sin puesto", así que **no se rompe nada**. Pasa a
+  distinguir el 409 para que `validateScaleSetup()` pueda devolver `scale_error: 'ip_not_configured'` en
+  vez de caer a captura manual sin motivo, igual que ya hace con `desktop_outdated`.
+
+### Orden de despliegue
+
+Los dos repositorios deben desplegarse juntos, o **el SGA primero**. Si VerentiaIP sale antes con el 409 y
+el SGA todavía no lo interpreta, cada puesto sin interfaz elegida le dirá al operario que reinstale la
+aplicación. El SGA con la interpretación puesta funciona igual contra un VerentiaIP antiguo, porque un
+VerentiaIP antiguo nunca devuelve 409.
 
 ## Pruebas
 
@@ -201,8 +222,11 @@ explicación. Se documenta aquí para que quien lo aborde sepa que el 409 ya tra
 - `store.read()` con fichero ausente y con JSON corrupto devuelve "sin configurar" sin lanzar.
 - `GET /ip` devuelve 200 con `{ip}` cuando hay elección, y 409 con `reason` y `candidates` cuando no.
 - Que el 409 no rompe al SGA: un `Http::get` sobre él no es `successful()`, así que
-  `getLocalIpFromElectron()` da `null`. Se comprueba en el repo del SGA si se toca allí; si no, se
-  verifica a mano.
+  `getLocalIpFromElectron()` da `null`.
+- En el SGA: un 409 produce `scale_error: 'ip_not_configured'` y no `desktop_outdated`; y un fallo de
+  conexión sigue produciendo lo que producía. Son diagnósticos distintos y no deben confundirse.
+- En el navegador: ante un 409, `ip-detector` **no** muestra el enlace de descarga, y ante un fallo de
+  conexión **sí**. Este es el test que impide volver a darle al operario la instrucción equivocada.
 
 ## Fuera de alcance
 
@@ -210,7 +234,6 @@ explicación. Se documenta aquí para que quien lo aborde sepa que el 409 ya tra
   CRUD nuevo y a que el SGA supiera de interfaces de red, que no es asunto suyo.
 - Detectar automáticamente por ruta por defecto. Adivinaría, y la decisión explícita fue preguntar.
 - IPv6. Ningún puesto lo usa y `work_stations.ip_address` guarda IPv4.
-- Que el SGA muestre el motivo del 409. Recogido arriba como mejora opcional.
 
 ## Riesgo principal
 
