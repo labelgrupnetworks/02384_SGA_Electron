@@ -244,9 +244,15 @@ ipcMain.handle("choose-interface", (event, name) => {
 
     // Only ever store a name the machine actually offers. A renderer sending
     // anything else would otherwise write a settings file that resolves to stale.
+    //
+    // The reason matters to the renderer: this candidate list can be stale by the
+    // time the click lands (the dialog rendered it earlier, the operator could have
+    // walked away), and no amount of retrying the same click will make an interface
+    // that no longer exists become offered again. That is a different situation from
+    // a write failure below, where the candidate itself is still perfectly valid.
     if (!candidates.some((c) => c.name === name)) {
         logger.warn(`⚠️ Interfaz no ofrecida, se ignora: ${name}`);
-        return { saved: false };
+        return { saved: false, reason: "not_offered" };
     }
 
     // write() can throw (EACCES, ENOSPC, EROFS, ...) unlike read(), which never does.
@@ -258,7 +264,7 @@ ipcMain.handle("choose-interface", (event, name) => {
         getConfigStore().write({ interface: name });
     } catch (error) {
         logger.error(`❌ No se pudo guardar la interfaz elegida (${name}): ${error.message}`);
-        return { saved: false };
+        return { saved: false, reason: "write_failed" };
     }
 
     logger.info(`✅ Interfaz de red elegida: ${name}`);
