@@ -5,6 +5,12 @@ const express = require("express");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
+const { registerLegacyRoutes } = require("./src/server/legacy-routes");
+const { registerScaleRoutes } = require("./src/server/scale-routes");
+const { createStore } = require("./src/config/store");
+const { resolveLocalIp } = require("./src/network/resolve");
+const { listCandidateInterfaces } = require("./src/network/interfaces");
+const { registerIpRoute } = require("./src/server/ip-route");
 
 // Migración a update-electron-app
 const { updateElectronApp, UpdateSourceType } = require("update-electron-app");
@@ -174,19 +180,131 @@ function setupAutoLaunch() {
     });
 }
 
-function getIPAddress() {
-    const interfaces = os.networkInterfaces();
-    let ipAddress = "No disponible";
+let configStore = null;
 
-    Object.keys(interfaces).forEach((interfaceName) => {
-        interfaces[interfaceName].forEach((iface) => {
-            if (iface.family === "IPv4" && !iface.internal) {
-                ipAddress = iface.address;
-            }
-        });
+function getConfigStore() {
+    if (!configStore) {
+        configStore = createStore(app.getPath("userData"), logger);
+    }
+    return configStore;
+}
+
+// The single place the rest of main.js asks "what is our address".
+function localIp() {
+    return resolveLocalIp({
+        interfaces: os.networkInterfaces(),
+        store: getConfigStore(),
+    });
+}
+
+// Human-readable state for the tray label. Spanish, like the rest of the UI.
+function describeLocalIp() {
+    const current = localIp();
+
+    switch (current.status) {
+        case "configured":
+        case "single":
+            return `${current.ip} (${current.interface})`;
+        case "stale":
+            return `sin configurar (${current.savedInterface} ya no existe)`;
+        case "no_network":
+            return "sin red";
+        default:
+            return "sin configurar";
+    }
+}
+
+let interfaceWindow = null;
+
+ipcMain.handle("get-interface-choice", () => {
+    const current = localIp();
+
+    // "What is our address" (localIp/resolveLocalIp) and "what could we choose from"
+    // are different questions. resolveLocalIp only carries a `candidates` list when it
+    // could not decide (not_configured/stale) — on a machine that is already configured
+    // or has a single candidate, that field is absent. The dialog needs the full list
+    // every time it is opened, including from the tray on an already-configured
+    // machine, so it asks the second question directly instead of widening the first.
+    return {
+        candidates: listCandidateInterfaces(os.networkInterfaces()),
+        reason: current.status,
+        savedInterface: current.savedInterface || null,
+        currentInterface: current.interface || null,
+    };
+});
+
+ipcMain.handle("choose-interface", (event, name) => {
+    // Validated against the full candidate list, not localIp()'s `candidates` —
+    // resolveLocalIp only populates that field when it could not decide
+    // (not_configured/stale). On an already-configured machine it is undefined,
+    // which would make this guard reject every name as "not offered", even a
+    // real one, the moment the dialog (fixed to use the same full list) lets an
+    // operator choose a different interface than the one already saved.
+    const candidates = listCandidateInterfaces(os.networkInterfaces());
+
+    // Only ever store a name the machine actually offers. A renderer sending
+    // anything else would otherwise write a settings file that resolves to stale.
+    //
+    // The reason matters to the renderer: this candidate list can be stale by the
+    // time the click lands (the dialog rendered it earlier, the operator could have
+    // walked away), and no amount of retrying the same click will make an interface
+    // that no longer exists become offered again. That is a different situation from
+    // a write failure below, where the candidate itself is still perfectly valid.
+    if (!candidates.some((c) => c.name === name)) {
+        logger.warn(`⚠️ Interfaz no ofrecida, se ignora: ${name}`);
+        return { saved: false, reason: "not_offered" };
+    }
+
+    // write() can throw (EACCES, ENOSPC, EROFS, ...) unlike read(), which never does.
+    // Electron turns a throwing handle callback into a rejected invoke on the
+    // renderer side, so the main process is safe either way, but the dialog's click
+    // handler needs a definite { saved: false } to tell the operator nothing was
+    // stored, rather than an unhandled rejection that leaves the window looking stuck.
+    try {
+        getConfigStore().write({ interface: name });
+    } catch (error) {
+        logger.error(`❌ No se pudo guardar la interfaz elegida (${name}): ${error.message}`);
+        return { saved: false, reason: "write_failed" };
+    }
+
+    logger.info(`✅ Interfaz de red elegida: ${name}`);
+
+    // A second, near-simultaneous invoke (an impatient double-click before the
+    // first one resolves) can reach here after the window is already mid-destruction
+    // from the first call's close(). Closing an already-destroyed BrowserWindow throws.
+    if (interfaceWindow && !interfaceWindow.isDestroyed()) {
+        interfaceWindow.close();
+    }
+    if (tray) {
+        tray.setContextMenu(buildTrayMenu());
+    }
+
+    return { saved: true };
+});
+
+function openInterfaceWindow() {
+    if (interfaceWindow) {
+        interfaceWindow.focus();
+        return;
+    }
+
+    interfaceWindow = new BrowserWindow({
+        width: 460,
+        height: 380,
+        resizable: false,
+        center: true,
+        title: "Interfaz de red",
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            preload: path.join(__dirname, "preload.js"),
+        },
     });
 
-    return ipAddress;
+    interfaceWindow.loadFile("select-interface.html");
+    interfaceWindow.on("closed", () => {
+        interfaceWindow = null;
+    });
 }
 
 function setupServer() {
@@ -199,177 +317,19 @@ function setupServer() {
         next();
     });
 
-    expressApp.get("/ip", (req, res) => {
-        res.json({ ip: getIPAddress() });
-    });
+    registerIpRoute(expressApp, { resolve: localIp, logger });
 
-    // Nuevo endpoint POST para enviar comandos a la báscula
-    expressApp.post("/scale-command", async (req, res) => {
-        logger.info(`🔄 Petición POST recibida en /scale-command`);
-        logger.info(`📋 Body recibido:`, req.body);
-        const { ip, port, command } = req.body;
-        
-        // Validar parámetros
-        if (!ip || !port || !command) {
-            return res.status(400).json({
-                success: false,
-                error: "Faltan parámetros requeridos: ip, port, command"
-            });
-        }
-
-        logger.info(`⚖️ [POST] Enviando comando a ${ip}:${port} → ${command}`);
-
-        try {
-            const net = require("net");
-            const client = new net.Socket();
-            let response = "";
-
-            // Crear una promesa para manejar la respuesta
-            const result = await new Promise((resolve, reject) => {
-                client.setTimeout(10000); // Timeout aumentado a 10 segundos
-
-                client.connect(port, ip, () => {
-                    logger.info(`✅ [POST] Conectado a ${ip}:${port}`);
-                    
-                    // Las IS30 suelen usar terminación \r o \r\n
-                    let fullCommand = command.endsWith("\r\n")
-                        ? command
-                        : command + "\r\n";
-                    
-                    // Convertir | a ETX (carácter ASCII 3) si está presente
-                    fullCommand = fullCommand.replace(/<ETX>/g, '\x03');
-                    
-                    logger.info(`➡️ [POST] Enviando: ${JSON.stringify(fullCommand)}`);
-                    client.write(fullCommand, "ascii");
-                });
-
-                client.on("data", (data) => {
-                    response += data.toString("ascii");
-                    logger.info(`📥 [POST] Datos recibidos: ${JSON.stringify(response)}`);
-                    
-                    // Dar un pequeño delay antes de cerrar para asegurar que no hay más datos
-                    setTimeout(() => {
-                        client.end();
-                    }, 100);
-                });
-
-                client.on("end", () => {
-                    logger.info(`✅ [POST] Conexión terminada. Respuesta final: ${response}`);
-                    
-                    // Limpiar caracteres de control de la respuesta
-                    const cleanResponse = response
-                        .replace(/\x02/g, '<STX>') // Remover STX (Start of Text)
-                        .replace(/\x03/g, '<ETX>') // Remover ETX (End of Text)
-                        .trim();
-                    
-                    logger.info(`🧹 [POST] Respuesta limpia: ${cleanResponse}`);
-                    
-                    resolve({ 
-                        success: true, 
-                        response: cleanResponse,
-                        raw_response: response.trim() // Mantener la respuesta original para debugging
-                    });
-                });
-
-                client.on("error", (err) => {
-                    logger.error(`❌ [POST] Error TCP: ${err.message}`);
-                    reject({ success: false, error: err.message });
-                });
-
-                client.on("timeout", () => {
-                    logger.warn("⏰ [POST] Timeout al comunicar");
-                    client.destroy();
-                    reject({ success: false, error: "Timeout de conexión" });
-                });
-            });
-
-            // Enviar respuesta exitosa
-            res.json(result);
-
-        } catch (err) {
-            logger.error(`❌ [POST] Excepción: ${err.message}`);
-            res.status(500).json({
-                success: false,
-                error: err.error || err.message
-            });
-        }
-    });
-
-    // Endpoint POST para enviar una trama HEX cruda por TCP (bytes exactos)
-    expressApp.post("/scale-hex", async (req, res) => {
-        logger.info(`🔄 Petición POST recibida en /scale-hex`);
-        const { ip, port, hex } = req.body;
-
-        if (!ip || !port || !hex) {
-            return res.status(400).json({
-                success: false,
-                error: "Faltan parámetros requeridos: ip, port, hex"
-            });
-        }
-
-        // "30 03 32..." o "300332..." -> Buffer de bytes exactos
-        const clean = hex.replace(/[^0-9a-fA-F]/g, "");
-        if (clean.length % 2 !== 0) {
-            return res.status(400).json({ success: false, error: "HEX con longitud impar" });
-        }
-        const payload = Buffer.from(clean, "hex");
-
-        logger.info(`⚖️ [HEX] Enviando a ${ip}:${port} → ${payload.toString("hex").match(/../g).join(" ")}`);
-
-        try {
-            const net = require("net");
-            const client = new net.Socket();
-            let response = Buffer.alloc(0);
-
-            const result = await new Promise((resolve, reject) => {
-                client.setTimeout(10000);
-
-                client.connect(port, ip, () => {
-                    logger.info(`✅ [HEX] Conectado a ${ip}:${port}`);
-                    client.write(payload); // bytes crudos, SIN encoding ni transformaciones
-                });
-
-                client.on("data", (data) => {
-                    response = Buffer.concat([response, data]);
-                    // Pequeño delay por si llegan más datos antes de cerrar
-                    setTimeout(() => client.end(), 100);
-                });
-
-                client.on("end", () => {
-                    const hexIn = response.toString("hex").match(/../g)?.join(" ") || "";
-                    logger.info(`✅ [HEX] Respuesta (${response.length} bytes): ${hexIn}`);
-                    resolve({
-                        success: true,
-                        response_hex: hexIn,
-                        response_ascii: response.toString("latin1")
-                    });
-                });
-
-                client.on("error", (err) => {
-                    logger.error(`❌ [HEX] Error TCP: ${err.message}`);
-                    reject({ success: false, error: err.message });
-                });
-
-                client.on("timeout", () => {
-                    logger.warn("⏰ [HEX] Timeout al comunicar");
-                    client.destroy();
-                    reject({ success: false, error: "Timeout de conexión" });
-                });
-            });
-
-            res.json(result);
-        } catch (err) {
-            logger.error(`❌ [HEX] Excepción: ${err.message}`);
-            res.status(500).json({ success: false, error: err.error || err.message });
-        }
-    });
+    registerLegacyRoutes(expressApp, logger);
+    registerScaleRoutes(expressApp, logger, { version: app.getVersion() });
 
     io.on("connection", (socket) => {
         logger.info("Cliente conectado");
-        socket.emit("ip-address", { ip: getIPAddress() });
+        const current = localIp();
+        socket.emit("ip-address", { ip: current.ip, status: current.status });
 
         socket.on("get-ip", () => {
-            socket.emit("ip-address", { ip: getIPAddress() });
+            const current = localIp();
+            socket.emit("ip-address", { ip: current.ip, status: current.status });
         });
 
         socket.on("disconnect", () => {
@@ -410,74 +370,83 @@ function hideSplashWindow() {
     }
 }
 
+// Moved to module scope (was a closure inside createTray()) so that
+// choose-interface can rebuild the menu after a successful save without
+// having to duplicate the template here.
+function buildTrayMenu() {
+    return Menu.buildFromTemplate([
+        {
+            label: `IP actual: ${describeLocalIp()}`,
+            enabled: false,
+        },
+        {
+            label: "🌐 Cambiar interfaz de red",
+            click: () => {
+                openInterfaceWindow();
+            },
+        },
+        {
+            label: `Versión: ${app.getVersion()}`,
+            enabled: false,
+        },
+        {
+            label: `Última verificación: ${
+                updateStatus.lastCheck
+                    ? updateStatus.lastCheck.toLocaleTimeString()
+                    : "Nunca"
+            }`,
+            enabled: false,
+        },
+        {
+            type: "separator",
+        },
+        {
+            label: "📊 Estado del actualizador",
+            click: () => {
+                showUpdateStatus();
+            },
+        },
+        {
+            label: "🛠️ Abrir DevTools",
+            click: () => {
+                // Crear ventana temporal para ver logs
+                const debugWindow = new BrowserWindow({
+                    width: 800,
+                    height: 600,
+                    webPreferences: {
+                        nodeIntegration: true,
+                        contextIsolation: false,
+                    },
+                });
+                debugWindow.loadURL(
+                    "data:text/html,<h1>Logs en la consola</h1><p>Abre DevTools para ver los logs (F12)</p>"
+                );
+                debugWindow.webContents.openDevTools();
+            },
+        },
+        {
+            type: "separator",
+        },
+        {
+            label: "Salir",
+            click: () => {
+                app.quitting = true;
+                app.quit();
+            },
+        },
+    ]);
+}
+
 function createTray() {
     const iconPath = path.join(__dirname, "icon.png");
     tray = new Tray(iconPath);
 
-    const buildContextMenu = () => {
-        return Menu.buildFromTemplate([
-            {
-                label: `IP actual: ${getIPAddress()}`,
-                enabled: false,
-            },
-            {
-                label: `Versión: ${app.getVersion()}`,
-                enabled: false,
-            },
-            {
-                label: `Última verificación: ${
-                    updateStatus.lastCheck
-                        ? updateStatus.lastCheck.toLocaleTimeString()
-                        : "Nunca"
-                }`,
-                enabled: false,
-            },
-            {
-                type: "separator",
-            },
-            {
-                label: "📊 Estado del actualizador",
-                click: () => {
-                    showUpdateStatus();
-                },
-            },
-            {
-                label: "🛠️ Abrir DevTools",
-                click: () => {
-                    // Crear ventana temporal para ver logs
-                    const debugWindow = new BrowserWindow({
-                        width: 800,
-                        height: 600,
-                        webPreferences: {
-                            nodeIntegration: true,
-                            contextIsolation: false,
-                        },
-                    });
-                    debugWindow.loadURL(
-                        "data:text/html,<h1>Logs en la consola</h1><p>Abre DevTools para ver los logs (F12)</p>"
-                    );
-                    debugWindow.webContents.openDevTools();
-                },
-            },
-            {
-                type: "separator",
-            },
-            {
-                label: "Salir",
-                click: () => {
-                    app.quitting = true;
-                    app.quit();
-                },
-            },
-        ]);
-    };
-
     tray.setToolTip("IP Server - VerentiaIP");
-    tray.setContextMenu(buildContextMenu());
+    tray.setContextMenu(buildTrayMenu());
 
     // Actualizar el menú cada 30 segundos para refrescar la IP y estado
     setInterval(() => {
-        tray.setContextMenu(buildContextMenu());
+        tray.setContextMenu(buildTrayMenu());
     }, 30000);
 }
 
@@ -492,6 +461,16 @@ app.whenReady().then(() => {
     createTray();
     setupServer();
     setupAutoLaunch();
+
+    // Only when there is genuinely something to choose. `single` needs no question,
+    // and `no_network` has nothing to offer — that one is fixed with a cable, not a
+    // dialog, so opening an empty window would only confuse.
+    const startup = localIp();
+    if (startup.status === "not_configured" || startup.status === "stale") {
+        openInterfaceWindow();
+    } else {
+        logger.info(`🌐 IP local: ${describeLocalIp()}`);
+    }
 
     // Configurar el auto-actualizador (forzar también en desarrollo para testing)
     setupAutoUpdater();

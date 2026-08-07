@@ -1,6 +1,6 @@
 {
   "name": "VerentiaIP",
-  "version": "1.2.0",
+  "version": "1.3.1",
   "description": "Aplicación para mostrar la IP",
   "author": "LabelGrup Networks <web@labelgrup.com>",
   "main": "main.js",
@@ -9,6 +9,7 @@
     "url": "https://github.com/labelgrupnetworks/02384_SGA_Electron.git"
   },
   "scripts": {
+    "test": "node --test \"test/**/*.test.js\"",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
@@ -36,5 +37,8 @@
     "dotenv": "^16.5.0",
     "dotenv-cli": "^8.0.0",
     "electron": "36.2.0"
+  },
+  "overrides": {
+    "yauzl": "^3.4.0"
   }
 }
