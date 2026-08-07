@@ -19,12 +19,15 @@
             background: #fff; border: 1px solid #d8d9e0; border-radius: 10px;
             padding: 12px 14px; margin-bottom: 10px; font-size: 14px; color: #25273d;
         }
-        button:hover { border-color: #0666eb; background: #f3f8ff; }
+        /* Verentia green, the SGA's riho $primary. */
+        button:hover { border-color: #86ba3b; background: #f5f9ef; }
         button:disabled { opacity: 0.5; cursor: default; }
         button:disabled:hover { border-color: #d8d9e0; background: #fff; }
         .iface { font-weight: 600; }
         .addr { color: #6b6c7e; }
-        .current { color: #0666eb; font-weight: 600; }
+        /* A darkened Verentia green: #86ba3b itself only reaches 2.4:1 against white,
+           which is too faint to read at this size. This one clears 5:1. */
+        .current { color: #577926; font-weight: 600; }
     </style>
 </head>
 <body>

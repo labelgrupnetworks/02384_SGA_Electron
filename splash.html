@@ -29,9 +29,12 @@
     .loading-spinner {
       width: 40px;
       height: 40px;
-      border: 5px solid rgba(179, 25, 131, 0.4);
+      /* Verentia green, #86ba3b — the same $primary the SGA's riho theme uses, so the
+         desktop app and the web app do not look like two different products. It used
+         to be #B31983, which was Fedefarma's magenta. */
+      border: 5px solid rgba(134, 186, 59, 0.4);
       border-radius: 50%;
-      border-top-color: #B31983;
+      border-top-color: #86ba3b;
       animation: spin 1s ease-in-out infinite;
       margin-top: 20px;
     }
@@ -53,17 +56,26 @@
   </style>
 </head>
 <body>
-  <img src="logo-fedefarma.png" alt="Logo" class="logo">
-  <h2>Verentia IP</h2>
+  <img src="logo.png" alt="Logo" class="logo">
   <div class="loading-text">Iniciando servidor, sea paciente...</div>
   <div class="loading-spinner"></div>
-  <div class="version" id="version">v1.1.0</div>
-  
+  <div class="version" id="version"></div>
+
   <script>
-    // Obtener la versión actual desde el proceso principal
-    window.addEventListener('DOMContentLoaded', () => {
-      const version = window.electronAPI.getVersion();
-      document.getElementById('version').textContent = `v1.1.0`;
+    // The version comes from the main process, which reads it with app.getVersion() —
+    // that is package.json's version, so a release bump can never leave this label
+    // behind. It starts empty on purpose: a hardcoded number here is what made the
+    // splash claim v1.1.0 while the app was already on 1.3.x.
+    window.addEventListener('DOMContentLoaded', async () => {
+      const element = document.getElementById('version');
+
+      try {
+        element.textContent = `v${await window.electronAPI.getVersion()}`;
+      } catch (error) {
+        // No version is better than a wrong one: this label is what someone reads out
+        // over the phone when a workstation misbehaves.
+        element.textContent = '';
+      }
     });
   </script>
 </body>

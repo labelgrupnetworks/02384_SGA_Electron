@@ -23,7 +23,7 @@
 ├── package.json         # Configuración del proyecto y dependencias
 ├── forge.config.js      # Configuración de Electron Forge
 ├── icon.ico/.png        # Iconos de la aplicación
-├── logo-fedefarma.png   # Logo para splash screen
+├── logo.png   # Logo para splash screen
 ├── .env                 # Variables de entorno (crear manualmente)
 ├── src/
 │   ├── server/
