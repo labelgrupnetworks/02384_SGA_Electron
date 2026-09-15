@@ -27,27 +27,15 @@ function fail(res, error) {
 }
 
 function registerCmcRoutes(expressApp, logger, { cache, machineState }) {
-    // Replace the global express.json() middleware with one that applies different
-    // limits based on path. This allows /cmc/preload to accept large payloads
-    // while keeping the default limit for other endpoints.
-    const stack = expressApp._router?.stack || [];
-    const globalJsonIndex = stack.findIndex(
-        layer => layer.name === 'jsonParser',
-    );
-
-    if (globalJsonIndex !== -1) {
-        stack.splice(globalJsonIndex, 1);
-    }
-
-    expressApp.use((req, res, next) => {
-        if (req.path === '/cmc/preload') {
-            return express.json({ limit: PRELOAD_BODY_LIMIT })(req, res, next);
-        }
-        return express.json()(req, res, next);
-    });
-
+    // Route-level express.json({ limit: PRELOAD_BODY_LIMIT }) only takes effect if
+    // registerCmcRoutes is called BEFORE the global express.json() middleware.
+    // Express parses in registration order: the route's 50mb parser runs first,
+    // sets req._body, and the later global 100kb parser no-ops. This allows
+    // /cmc/preload to accept large ZPL payloads while other endpoints keep the
+    // strict default limit. Do not move this registration after global middleware.
     expressApp.post(
         '/cmc/preload',
+        express.json({ limit: PRELOAD_BODY_LIMIT }),
         (req, res) => {
             try {
                 const state = cache.replace(req.body);

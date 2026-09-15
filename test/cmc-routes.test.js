@@ -17,9 +17,12 @@ const entry = (barcode) => ({
 
 async function startApp({ machineState = () => ({ connected: true }) } = {}) {
     const app = express();
-    app.use(express.json());
     const cache = createManifestCache();
+    // Register CMC routes BEFORE the global express.json() so the route's
+    // 50mb parser runs first and sets req._body, allowing the later global
+    // 100kb parser to no-op. This proves the real arrangement works.
     registerCmcRoutes(app, silentLogger, { cache, machineState });
+    app.use(express.json());
     const server = await new Promise((resolve) => {
         const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });
