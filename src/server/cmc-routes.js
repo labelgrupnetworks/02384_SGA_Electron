@@ -39,11 +39,11 @@ function registerCmcRoutes(expressApp, logger, { cache, machineState }) {
         (req, res) => {
             try {
                 const state = cache.replace(req.body);
-                logger.info(`📦 [cmc] manifiesto ${state.batch_id} cargado (${state.total} bultos)`);
+                logger.info(`📦 [cmc] manifest ${state.batch_id} loaded (${state.total} parcels)`);
 
                 return res.json({ success: true, manifest: state });
             } catch (error) {
-                logger.warn(`⚠️ [cmc] preload rechazado: ${safeMessage(error)}`);
+                logger.warn(`⚠️ [cmc] preload rejected: ${safeMessage(error)}`);
 
                 return fail(res, error);
             }

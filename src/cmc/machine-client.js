@@ -42,7 +42,16 @@ function createMachineClient({
 
     const report = (result) => {
         try {
-            onResult({ occurred_at: nowIso(), ...result });
+            const outcome = onResult({ occurred_at: nowIso(), ...result });
+            // onResult may be async: a synchronous throw is caught above, but a
+            // promise that rejects later would otherwise surface as an
+            // unhandled rejection. Attach a catch without awaiting, so report()
+            // stays synchronous — it sits on the ENQ reply path.
+            if (outcome && typeof outcome.then === 'function') {
+                outcome.catch((error) => {
+                    logger.error(`❌ [cmc] onResult rejected: ${error.message}`);
+                });
+            }
         } catch (error) {
             logger.error(`❌ [cmc] onResult threw: ${error.message}`);
         }
@@ -181,7 +190,7 @@ function createMachineClient({
                 socket = next;
                 connected = true;
                 lastError = null;
-                logger.info(`🔌 [cmc] conectado a la máquina ${host}:${port}`);
+                logger.info(`🔌 [cmc] connected to machine ${host}:${port}`);
 
                 next.on('data', (chunk) => {
                     for (const payload of read(chunk)) handlePayload(payload);
@@ -191,7 +200,7 @@ function createMachineClient({
                     if (socket === next) {
                         socket = null;
                         connected = false;
-                        logger.warn('⚠️ [cmc] la máquina cerró la conexión');
+                        logger.warn('⚠️ [cmc] machine closed the connection');
                         scheduleReconnect();
                     }
                 });

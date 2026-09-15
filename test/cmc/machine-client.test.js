@@ -225,3 +225,75 @@ test('stop() during an in-flight handshake prevents the connection from being ad
         await machine.close();
     }
 });
+
+test('an onResult that throws synchronously does not break the ENQ loop', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: () => { throw new Error('onResult boom'); },
+        deliver: ctx.deliver,
+    });
+
+    try {
+        await client.start();
+
+        const first = machine.next();
+        machine.send('ENQ|111');
+        assert.equal(await first, buildEnqReply({ accepted: true }));
+
+        // The synchronous throw must not have killed the loop: a second ENQ
+        // is still answered. This is the property worth pinning, not merely
+        // that the error got logged.
+        const second = machine.next();
+        machine.send('ENQ|111');
+        assert.equal(await second, buildEnqReply({ accepted: true }));
+    } finally {
+        await client.stop();
+        await machine.close();
+    }
+});
+
+test('an onResult that rejects asynchronously does not break the ENQ loop', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: async () => {
+            await new Promise((r) => setTimeout(r, 10));
+            throw new Error('onResult rejected');
+        },
+        deliver: ctx.deliver,
+    });
+
+    const unhandled = [];
+    const onUnhandledRejection = (error) => unhandled.push(error);
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+        await client.start();
+
+        const first = machine.next();
+        machine.send('ENQ|111');
+        assert.equal(await first, buildEnqReply({ accepted: true }));
+
+        // Give the rejected promise time to surface, so we can confirm it was
+        // swallowed by report()'s .catch rather than becoming an unhandled
+        // rejection that could crash a long-running process.
+        await new Promise((r) => setTimeout(r, 50));
+
+        // The property worth pinning: the loop survives and answers the next
+        // ENQ, not merely that the rejection got logged.
+        const second = machine.next();
+        machine.send('ENQ|111');
+        assert.equal(await second, buildEnqReply({ accepted: true }));
+
+        assert.equal(unhandled.length, 0, 'onResult rejection must not surface as an unhandled rejection');
+    } finally {
+        process.removeListener('unhandledRejection', onUnhandledRejection);
+        await client.stop();
+        await machine.close();
+    }
+});
