@@ -35,7 +35,7 @@ test('GET /health announces the version and available APIs', async () => {
         assert.equal(res.status, 200);
         const body = await res.json();
         assert.equal(body.version, '1.3.0');
-        assert.deepEqual(body.apis, ['legacy', 'scale-v1']);
+        assert.deepEqual(body.apis, ['legacy', 'scale-v1', 'cmc-v1']);
         assert.deepEqual(body.brands.sort(), ['bizerba', 'mettler_toledo']);
     } finally {
         await app.close();

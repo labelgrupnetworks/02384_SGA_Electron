@@ -7,6 +7,10 @@ const http = require("http");
 const { Server } = require("socket.io");
 const { registerLegacyRoutes } = require("./src/server/legacy-routes");
 const { registerScaleRoutes } = require("./src/server/scale-routes");
+const { registerCmcRoutes } = require("./src/server/cmc-routes");
+const { createManifestCache } = require("./src/cmc/manifest-cache");
+const { createMachineClient } = require("./src/cmc/machine-client");
+const { createReportQueue } = require("./src/cmc/report-queue");
 const { createStore } = require("./src/config/store");
 const { resolveLocalIp } = require("./src/network/resolve");
 const { listCandidateInterfaces } = require("./src/network/interfaces");
@@ -60,6 +64,12 @@ const PORT = 3000;
 let tray = null;
 let splashWindow = null;
 let serverInstance = null;
+// CMC driver state. Declared here (module scope), not inside setupServer,
+// because the before-quit handler below also needs to reach cmcMachine and
+// cmcReportQueue to stop them at shutdown.
+let cmcCache = null;
+let cmcMachine = null;
+let cmcReportQueue = null;
 let updateStatus = {
     lastCheck: null,
     updateAvailable: false,
@@ -308,6 +318,47 @@ function openInterfaceWindow() {
 }
 
 function setupServer() {
+    // CMC routes MUST be registered before the global express.json() below.
+    // /cmc/preload mounts its own express.json({ limit: '50mb' }) so a whole
+    // base64 ZPL manifest is not rejected by express's 100 KB default. Express
+    // runs body parsers in registration order: once the global 100 KB parser
+    // below has run, req._body is already set and the route-level parser
+    // becomes a no-op, so preload would 413 on any real manifest. Verified
+    // empirically: registered first, a 1.2 MB payload is accepted; registered
+    // after the global parser, the same payload is rejected with 413.
+    const cmcConfig = getConfigStore().read().cmc ?? {};
+
+    cmcCache = createManifestCache();
+    cmcReportQueue = createReportQueue({
+        baseDir: app.getPath("userData"),
+        endpoint: cmcConfig.verentia?.endpoint ?? "",
+        stationToken: cmcConfig.verentia?.station_token ?? "",
+        logger,
+    });
+
+    if (cmcConfig.enabled) {
+        cmcMachine = createMachineClient({
+            host: cmcConfig.machine?.host,
+            port: cmcConfig.machine?.port,
+            cache: cmcCache,
+            labelers: cmcConfig.labelers ?? [],
+            logger,
+            onResult: (result) => cmcReportQueue.push(result),
+        });
+
+        cmcReportQueue.start();
+        // A machine that is not answering yet must not stop the app from booting:
+        // the client reconnects on its own and the operator sees it in /cmc/status.
+        cmcMachine.start().catch((error) => {
+            logger.warn(`⚠️ [cmc] startup without machine: ${error.message}`);
+        });
+    }
+
+    registerCmcRoutes(expressApp, logger, {
+        cache: cmcCache,
+        machineState: () => (cmcMachine ? cmcMachine.state() : { connected: false, last_error: "cmc disabled" }),
+    });
+
     // Middleware para parsear JSON - DEBE ir ANTES de las rutas
     expressApp.use(express.json());
 
@@ -331,6 +382,17 @@ function setupServer() {
             const current = localIp();
             socket.emit("ip-address", { ip: current.ip, status: current.status });
         });
+
+        const emitCmcStatus = () => {
+            socket.emit("cmc-status", {
+                manifest: cmcCache.state(),
+                machine: cmcMachine ? cmcMachine.state() : { connected: false, last_error: "cmc disabled" },
+                queued_reports: cmcReportQueue.size(),
+            });
+        };
+
+        emitCmcStatus();
+        socket.on("get-cmc-status", emitCmcStatus);
 
         socket.on("disconnect", () => {
             logger.info("Cliente desconectado");
@@ -485,6 +547,11 @@ app.on("window-all-closed", (e) => {
 // Manejo de eventos de actualización
 app.on("before-quit", () => {
     logger.info("🔄 Cerrando aplicación...");
+
+    // Stop the CMC driver: without this a live machine socket or the report
+    // queue's flush timer keeps the process alive past quit.
+    if (cmcMachine) cmcMachine.stop();
+    if (cmcReportQueue) cmcReportQueue.stop();
 
     // Cerrar servidor limpiamente
     if (serverInstance) {

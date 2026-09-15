@@ -145,7 +145,7 @@ function registerScaleRoutes(expressApp, logger, { version }) {
     expressApp.get('/health', (req, res) => {
         res.json({
             version,
-            apis: ['legacy', 'scale-v1'],
+            apis: ['legacy', 'scale-v1', 'cmc-v1'],
             brands: registry.listBrands().map((b) => b.id),
         });
     });
