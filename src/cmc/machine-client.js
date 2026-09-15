@@ -29,6 +29,11 @@ function createMachineClient({
     reconnectMs = DEFAULT_RECONNECT_MS,
 }) {
     let socket = null;
+    // Tracks a connection attempt that hasn't finished its handshake yet, so
+    // stop() can reclaim it: `socket` itself is only assigned once the
+    // handshake completes, which is too late for stop() to reach it there.
+    let pendingSocket = null;
+    let pendingSettle = null;
     let reconnectTimer = null;
     let stopped = false;
     let connected = false;
@@ -140,7 +145,16 @@ function createMachineClient({
             const next = new net.Socket();
             const read = createFrameReader();
 
+            pendingSocket = next;
+            pendingSettle = { resolve, reject };
+
+            const clearPending = () => {
+                if (pendingSocket === next) pendingSocket = null;
+                if (pendingSettle && pendingSettle.resolve === resolve) pendingSettle = null;
+            };
+
             const onConnectError = (error) => {
+                clearPending();
                 next.destroy();
                 lastError = error.message;
                 connected = false;
@@ -152,6 +166,18 @@ function createMachineClient({
 
             next.connect(port, host, () => {
                 next.removeListener('error', onConnectError);
+                clearPending();
+
+                // The client was stopped while this handshake was still in
+                // flight. stop() could not reach this socket earlier (it was
+                // not yet `socket`), so the adoption is refused here instead:
+                // no `socket` assignment, no `connected`, no handlers wired up.
+                if (stopped) {
+                    next.destroy();
+                    resolve();
+                    return;
+                }
+
                 socket = next;
                 connected = true;
                 lastError = null;
@@ -186,6 +212,20 @@ function createMachineClient({
             if (reconnectTimer) {
                 clearTimeout(reconnectTimer);
                 reconnectTimer = null;
+            }
+            if (pendingSocket) {
+                // Reclaim a handshake that is still in flight. This alone
+                // cannot stop the connect callback from firing regardless
+                // (see the `stopped` check inside it), but it does mean the
+                // socket is destroyed and start()'s promise settles here
+                // rather than waiting on an event that may never come.
+                const inFlight = pendingSocket;
+                const settle = pendingSettle;
+                pendingSocket = null;
+                pendingSettle = null;
+                inFlight.removeAllListeners();
+                inFlight.destroy();
+                if (settle) settle.resolve(); // being stopped is not an error
             }
             if (socket) {
                 const current = socket;

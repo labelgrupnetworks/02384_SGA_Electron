@@ -191,3 +191,37 @@ test('state reflects the connection going down', async () => {
         await machine.close();
     }
 });
+
+test('stop() during an in-flight handshake prevents the connection from being adopted', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: (r) => ctx.results.push(r), deliver: ctx.deliver,
+    });
+
+    try {
+        // Deliberately not awaited: stop() must land while the TCP handshake
+        // is still in flight. Node's event loop guarantees the handshake's
+        // connect callback cannot fire until this synchronous block finishes,
+        // so calling stop() right here (before awaiting anything) is a
+        // deterministic way to land inside that window, not a sleep-and-hope.
+        const started = client.start();
+        await client.stop();
+
+        // A stopped client must never leave a caller of start() hanging.
+        await started;
+
+        assert.equal(client.state().connected, false);
+
+        // Give the handshake every chance to land and be wrongly adopted
+        // anyway (the defect this guards against: a completed handshake
+        // silently reconnecting a client that was told to stop).
+        await new Promise((r) => setTimeout(r, 200));
+        assert.equal(client.state().connected, false);
+    } finally {
+        await client.stop();
+        await machine.close();
+    }
+});
