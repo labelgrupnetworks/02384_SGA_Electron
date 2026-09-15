@@ -3,6 +3,13 @@ const ETX = 0x03;
 const SEPARATOR = '|';
 const ENCODING = 'latin1';
 
+// PENDING: the real protocol's maximum frame size is unconfirmed. Real frames
+// (a barcode, or a barcode plus a status token) are tens of bytes. This is a
+// generous provisional bound. If a frame opened with STX never closes with ETX,
+// and its buffered run exceeds this limit, the buffer is discarded and scanning
+// resumes for the next STX, treating the unterminated run as noise.
+const MAX_FRAME_BYTES = 65536;
+
 // PENDING: the field separator, the reply tokens below and the exact set of
 // message types are provisional. CMC-DataProtocol_4.1.pdf has not been read in
 // full, and REQ-bsalamanca-023 mentions a "custom CMC message" that may differ
@@ -11,7 +18,7 @@ const ENCODING = 'latin1';
 const MESSAGE_TYPES = Object.freeze({
     ENQ: 'ENQ',   // machine asks what to do with a barcode
     ENQ_REPLY: 'enq',
-    LABEL: 'LAB',  // bridge pushes a label to the machine's labeler
+    LABEL: 'LAB',  // recognized message-type identifier (labels travel over separate TCP, not this link)
     ACK: 'ACK',   // machine reports the induction outcome
 });
 
@@ -51,6 +58,12 @@ function createFrameReader() {
 
             const end = buffer.indexOf(ETX, start + 1);
             if (end === -1) {
+                // If the unterminated frame exceeds MAX_FRAME_BYTES, discard it
+                // and treat it as noise; resume scanning for the next STX.
+                if (buffer.length - start > MAX_FRAME_BYTES) {
+                    buffer = buffer.subarray(start + 1);
+                    continue;
+                }
                 buffer = buffer.subarray(start);
                 break;
             }
@@ -78,6 +91,6 @@ function buildEnqReply({ accepted }) {
 }
 
 module.exports = {
-    STX, ETX, SEPARATOR, ENCODING, MESSAGE_TYPES,
+    STX, ETX, SEPARATOR, ENCODING, MESSAGE_TYPES, MAX_FRAME_BYTES,
     frame, createFrameReader, parseMessage, buildEnqReply,
 };

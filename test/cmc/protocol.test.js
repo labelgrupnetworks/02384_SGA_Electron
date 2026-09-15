@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-    frame, createFrameReader, parseMessage, buildEnqReply, STX, ETX,
+    frame, createFrameReader, parseMessage, buildEnqReply, STX, ETX, MAX_FRAME_BYTES,
 } = require('../../src/cmc/protocol');
 
 test('frame wraps the payload in STX and ETX', () => {
@@ -48,4 +48,17 @@ test('parseMessage rejects an empty payload', () => {
 
 test('buildEnqReply distinguishes accept from reject', () => {
     assert.notEqual(buildEnqReply({ accepted: true }), buildEnqReply({ accepted: false }));
+});
+
+test('the reader discards unterminated frames exceeding MAX_FRAME_BYTES and recovers', () => {
+    const read = createFrameReader();
+    // Create an unterminated frame (STX but no ETX) that exceeds MAX_FRAME_BYTES
+    const oversizeChunk = Buffer.concat([
+        Buffer.from([STX]),
+        Buffer.alloc(MAX_FRAME_BYTES + 1000, 'x'),
+    ]);
+    // Feed the oversized unterminated frame
+    assert.deepEqual(read(oversizeChunk), []);
+    // Feed a well-formed frame and verify the reader recovers
+    assert.deepEqual(read(frame('ENQ|recovery')), ['ENQ|recovery']);
 });
