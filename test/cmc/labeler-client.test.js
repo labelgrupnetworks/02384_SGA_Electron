@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const net = require('node:net');
 const { sendZpl } = require('../../src/cmc/labeler-client');
 
-async function createFakeLabeler({ silent = false } = {}) {
+async function createFakeLabeler() {
     const received = [];
     const sockets = new Set();
     const server = net.createServer((socket) => {
@@ -15,7 +15,6 @@ async function createFakeLabeler({ silent = false } = {}) {
     const port = await new Promise((resolve) => {
         server.listen(0, '127.0.0.1', () => resolve(server.address().port));
     });
-    if (silent) server.pause?.();
     return {
         port,
         received,
@@ -57,4 +56,6 @@ test('sendZpl validates its arguments', async () => {
     await assert.rejects(() => sendZpl({ host: '', port: 9100, content: 'x' }), /host/);
     await assert.rejects(() => sendZpl({ host: '127.0.0.1', port: 0, content: 'x' }), /port/);
     await assert.rejects(() => sendZpl({ host: '127.0.0.1', port: 9100, content: '' }), /content/);
+    await assert.rejects(() => sendZpl(), (error) => error.code === 'peripheral');
+    await assert.rejects(() => sendZpl(null), (error) => error.code === 'peripheral');
 });

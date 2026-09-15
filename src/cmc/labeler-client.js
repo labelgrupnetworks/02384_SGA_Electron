@@ -19,7 +19,8 @@ function isValidPort(port) {
  * done once the bytes are flushed. `TcpLink` from src/scales is deliberately not
  * reused — it is built around reading line-framed replies, which do not exist here.
  */
-function sendZpl({ host, port, content, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+function sendZpl(options = {}) {
+    const { host, port, content, timeoutMs = DEFAULT_TIMEOUT_MS } = options ?? {};
     return new Promise((resolve, reject) => {
         if (!isValidHost(host)) {
             reject(new CmcError('peripheral', 'host must be a non-empty string', { host }));
