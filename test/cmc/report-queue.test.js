@@ -132,3 +132,75 @@ test('flush sends at most batchSize results per call', async () => {
     assert.equal(calls[0].body.results.length, 2);
     assert.equal(queue.size(), 1);
 });
+
+test('a hung fetch times out and keeps items', async () => {
+    const queue = createReportQueue({
+        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't',
+        logger: silentLogger,
+        fetchImpl: async (url, options) => {
+            // Simulate abort signal being triggered by timeout
+            if (options.signal) {
+                throw new Error('The operation was aborted');
+            }
+            return new Promise(() => {}); // never settles
+        },
+        timeoutMs: 50,
+    });
+
+    queue.push(result('111'));
+    await queue.flush();
+
+    // Items preserved after timeout abort
+    assert.equal(queue.size(), 1);
+
+    // Subsequent flush should work (guard was released)
+    const calls = [];
+    const successQueue = createReportQueue({
+        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't',
+        logger: silentLogger, fetchImpl: okFetch(calls),
+    });
+    successQueue.push(result('111'));
+    await successQueue.flush();
+
+    assert.equal(calls.length, 1);
+    assert.equal(successQueue.size(), 0);
+});
+
+test('flushing guard prevents concurrent flush calls', async () => {
+    const calls = [];
+    let holdFirst = true;
+    const holdResolver = { resolve: null };
+    const holdPromise = new Promise(resolve => {
+        holdResolver.resolve = resolve;
+    });
+
+    const queue = createReportQueue({
+        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't',
+        logger: silentLogger,
+        fetchImpl: async (url, options) => {
+            if (holdFirst) {
+                // Wait for explicit signal before returning
+                await holdPromise;
+            }
+            return okFetch(calls)(url, options);
+        },
+    });
+
+    queue.push(result('111'));
+
+    // Fire two flush calls without awaiting the first
+    const flush1 = queue.flush();
+    const flush2 = queue.flush(); // Should be a no-op while flush1 is in flight
+
+    // Give both promises a microtask to start
+    await new Promise(resolve => setImmediate(resolve));
+
+    // Release the hold and wait for both to complete
+    holdResolver.resolve();
+    await flush1;
+    await flush2;
+
+    // Only one network call should have been made despite two flush() invocations
+    assert.equal(calls.length, 1);
+    assert.equal(queue.size(), 0);
+});

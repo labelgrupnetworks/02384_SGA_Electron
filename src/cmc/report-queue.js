@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const FILE_NAME = 'cmc-report-queue.json';
 const DEFAULT_FLUSH_MS = 5000;
 const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_TIMEOUT_MS = 4500;
 
 /**
  * Outbound results, queued on disk.
@@ -25,6 +26,7 @@ function createReportQueue({
     fetchImpl = globalThis.fetch,
     flushMs = DEFAULT_FLUSH_MS,
     batchSize = DEFAULT_BATCH_SIZE,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
 }) {
     const filePath = path.join(baseDir, FILE_NAME);
     let timer = null;
@@ -36,7 +38,15 @@ function createReportQueue({
             return Array.isArray(parsed) ? parsed : [];
         } catch (error) {
             if (error.code !== 'ENOENT') {
-                logger.warn(`⚠️ [cmc] report queue unreadable, starting empty: ${error.message}`);
+                // Move corrupt file aside for inspection, don't silently drop it
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const corruptPath = `${filePath}.corrupt-${timestamp}`;
+                try {
+                    fs.renameSync(filePath, corruptPath);
+                    logger.warn(`⚠️ [cmc] report queue corrupted, moved to ${path.basename(corruptPath)}, starting empty`);
+                } catch (renameError) {
+                    logger.warn(`⚠️ [cmc] report queue unreadable and could not be moved aside: ${renameError.message}`);
+                }
             }
             return [];
         }
@@ -47,7 +57,10 @@ function createReportQueue({
     const persist = () => {
         try {
             fs.mkdirSync(baseDir, { recursive: true });
-            fs.writeFileSync(filePath, `${JSON.stringify(pending, null, 2)}\n`, 'utf8');
+            // Write to temp file first, then rename atomically to avoid corruption on crash
+            const tempPath = `${filePath}.tmp`;
+            fs.writeFileSync(tempPath, `${JSON.stringify(pending, null, 2)}\n`, 'utf8');
+            fs.renameSync(tempPath, filePath);
         } catch (error) {
             logger.error(`❌ [cmc] failed to persist report queue: ${error.message}`);
         }
@@ -55,7 +68,7 @@ function createReportQueue({
 
     const queue = {
         push(result) {
-            pending.push({ id: crypto.randomUUID(), ...result });
+            pending.push({ ...result, id: crypto.randomUUID() });
             persist();
         },
 
@@ -79,6 +92,7 @@ function createReportQueue({
                         'X-CMC-Station-Token': stationToken,
                     },
                     body: JSON.stringify({ results: batch }),
+                    signal: AbortSignal.timeout(timeoutMs),
                 });
 
                 if (!response.ok) {
@@ -114,4 +128,4 @@ function createReportQueue({
     return queue;
 }
 
-module.exports = { createReportQueue, DEFAULT_FLUSH_MS, DEFAULT_BATCH_SIZE };
+module.exports = { createReportQueue, DEFAULT_FLUSH_MS, DEFAULT_BATCH_SIZE, DEFAULT_TIMEOUT_MS };
