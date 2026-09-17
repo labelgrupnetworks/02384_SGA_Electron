@@ -25,6 +25,21 @@ function validate(manifest) {
         if (!Array.isArray(entry.label_payloads) || entry.label_payloads.length === 0) {
             throw new CmcError('bad_manifest', `bad_manifest: entry ${entry.barcode} needs at least one label payload`);
         }
+        for (const payload of entry.label_payloads) {
+            if (payload === null || typeof payload !== 'object' || typeof payload.content_base64 !== 'string' || payload.content_base64.length === 0) {
+                throw new CmcError('bad_manifest', `bad_manifest: entry ${entry.barcode} has a label payload missing content_base64`);
+            }
+            // Buffer.from(..., 'base64') never throws on garbage input; it just
+            // decodes what it can and silently drops invalid characters. The
+            // only reliable way to catch malformed base64 here is to re-encode
+            // the decoded bytes and compare, ignoring the padding/whitespace
+            // differences a real ZPL payload will never contain.
+            const normalized = payload.content_base64.replace(/\s+/g, '');
+            const roundTripped = Buffer.from(normalized, 'base64').toString('base64');
+            if (roundTripped.replace(/=+$/, '') !== normalized.replace(/=+$/, '')) {
+                throw new CmcError('bad_manifest', `bad_manifest: entry ${entry.barcode} has a label payload with malformed content_base64`);
+            }
+        }
         if (seen.has(entry.barcode)) {
             throw new CmcError('bad_manifest', `bad_manifest: duplicate barcode ${entry.barcode}`);
         }

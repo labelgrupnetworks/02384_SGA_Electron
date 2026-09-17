@@ -73,3 +73,38 @@ test('duplicate barcodes in one manifest are rejected', () => {
         /duplicate/,
     );
 });
+
+test('a label payload missing content_base64 is rejected', () => {
+    const cache = createManifestCache();
+    const badEntry = {
+        barcode: '111',
+        label_payloads: [{ content_type: 'application/zpl', filename: '111.zpl' }],
+    };
+    assert.throws(
+        () => cache.replace({ batch_id: 'B', entries: [badEntry] }),
+        /content_base64/,
+    );
+});
+
+test('a label payload with malformed content_base64 is rejected', () => {
+    const cache = createManifestCache();
+    const badEntry = {
+        barcode: '111',
+        label_payloads: [{ content_base64: 'not-valid-base64!!!', content_type: 'application/zpl', filename: '111.zpl' }],
+    };
+    assert.throws(
+        () => cache.replace({ batch_id: 'B', entries: [badEntry] }),
+        /malformed content_base64/,
+    );
+});
+
+test('a manifest with an invalid label payload leaves the previous batch untouched', () => {
+    const cache = createManifestCache();
+    cache.replace({ batch_id: 'B1', entries: [entry('111')] });
+
+    const badEntry = { barcode: '222', label_payloads: [{ content_base64: '' }] };
+    assert.throws(() => cache.replace({ batch_id: 'B2', entries: [badEntry] }));
+
+    assert.ok(cache.lookup('111'));
+    assert.equal(cache.state().batch_id, 'B1');
+});
