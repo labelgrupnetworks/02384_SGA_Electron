@@ -22,10 +22,14 @@ const HTTP_STATUS = Object.freeze({
 
 class CmcError extends Error {
     constructor(code, message, detail = null) {
-        super(message);
+        // Validated before super(message): an invalid code must not leave a
+        // half-constructed CmcError (message set but code never checked)
+        // behind as the thrown value — fail before any part of the object
+        // is built.
         if (!ERROR_CODES.includes(code)) {
             throw new Error(`unknown code: ${code}`);
         }
+        super(message);
         this.name = 'CmcError';
         this.code = code;
         this.detail = detail;
