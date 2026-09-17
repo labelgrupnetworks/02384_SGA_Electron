@@ -392,3 +392,49 @@ test('the client reconnects on its own after the connection drops', async () => 
         await machine.close();
     }
 });
+
+test('a transient runtime error does not leave state() reporting a stale last_error once traffic resumes', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+
+    // Capture the socket connect() creates and adopts, so a transient
+    // 'error' event can be simulated directly on it, without needing to
+    // break the real TCP connection underneath.
+    let capturedSocket = null;
+    const originalConnect = net.Socket.prototype.connect;
+    net.Socket.prototype.connect = function patchedConnect(...args) {
+        capturedSocket = this;
+        return originalConnect.apply(this, args);
+    };
+
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: (r) => ctx.results.push(r), deliver: ctx.deliver,
+    });
+
+    try {
+        await client.start();
+        net.Socket.prototype.connect = originalConnect;
+        assert.ok(capturedSocket, 'the adopted socket must have been captured');
+
+        capturedSocket.emit('error', new Error('synthetic runtime error'));
+
+        // The error alone must not be mistaken for the connection going
+        // down: it is recorded, but connected stays true.
+        assert.equal(client.state().connected, true);
+        assert.match(client.state().last_error, /synthetic runtime error/);
+
+        // Real traffic is the proof the link is healthy again; the stale
+        // error must not keep haunting state() once that is established.
+        const pending = machine.next();
+        machine.send('ENQ|111');
+        await pending;
+
+        assert.equal(client.state().last_error, null);
+    } finally {
+        net.Socket.prototype.connect = originalConnect;
+        await client.stop();
+        await machine.close();
+    }
+});

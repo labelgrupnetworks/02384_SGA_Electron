@@ -233,9 +233,21 @@ function createMachineClient({
                 logger.info(`🔌 [cmc] connected to machine ${host}:${port}`);
 
                 next.on('data', (chunk) => {
+                    // Any data at all is proof the link is healthy right now,
+                    // so a stale error from a previous hiccup (the socket
+                    // recovered without ever going through 'close') must not
+                    // keep haunting state() forever.
+                    lastError = null;
                     for (const payload of read(chunk)) handlePayload(payload);
                 });
-                next.on('error', (error) => { lastError = error.message; });
+                next.on('error', (error) => {
+                    // Guard against a listener left over from a socket that
+                    // has already been replaced (mirrors the same guard on
+                    // 'close' below): without it, a straggling event from a
+                    // superseded socket could overwrite the current
+                    // lastError with a stale, unrelated message.
+                    if (socket === next) lastError = error.message;
+                });
                 next.on('close', () => {
                     if (socket === next) {
                         socket = null;
