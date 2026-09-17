@@ -18,9 +18,10 @@ const entry = (barcode) => ({
 async function startApp({ machineState = () => ({ connected: true }) } = {}) {
     const app = express();
     const cache = createManifestCache();
-    // Register CMC routes BEFORE the global express.json() so the route's
-    // 50mb parser runs first and sets req._body, allowing the later global
-    // 100kb parser to no-op. This proves the real arrangement works.
+    // Register CMC routes BEFORE the global express.json(), matching main.js.
+    // The preload handler ends the response itself, so the global parser is
+    // never reached at all for that request. This proves the real
+    // arrangement works; see test below for what happens in the wrong order.
     registerCmcRoutes(app, silentLogger, { cache, machineState });
     app.use(express.json());
     const server = await new Promise((resolve) => {

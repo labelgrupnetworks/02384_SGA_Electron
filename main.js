@@ -323,12 +323,17 @@ function openInterfaceWindow() {
 function setupServer() {
     // CMC routes MUST be registered before the global express.json() below.
     // /cmc/preload mounts its own express.json({ limit: '50mb' }) so a whole
-    // base64 ZPL manifest is not rejected by express's 100 KB default. Express
-    // runs body parsers in registration order: once the global 100 KB parser
-    // below has run, req._body is already set and the route-level parser
-    // becomes a no-op, so preload would 413 on any real manifest. Verified
-    // empirically: registered first, a 1.2 MB payload is accepted; registered
-    // after the global parser, the same payload is rejected with 413.
+    // base64 ZPL manifest is not rejected by express's 100 KB default. The
+    // preload handler ends the response itself (res.json(...)), so if this
+    // registration happened after the global parser, that global parser
+    // would run first, reject the payload at 100 KB, and this route would
+    // never even be reached. There is a second reason this order matters:
+    // the request logger registered further below logs req.body for every
+    // request, and only avoids writing tens of megabytes of base64 ZPL into
+    // electron-log on every preload because this route already ended the
+    // response before that logger's middleware runs. Verified empirically:
+    // registered first, a 1.2 MB payload is accepted; registered after the
+    // global parser, the same payload is rejected with 413.
     const cmcConfig = getConfigStore().read().cmc ?? {};
 
     cmcCache = createManifestCache();

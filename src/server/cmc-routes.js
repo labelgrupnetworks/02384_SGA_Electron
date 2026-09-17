@@ -28,11 +28,21 @@ function fail(res, error) {
 
 function registerCmcRoutes(expressApp, logger, { cache, machineState }) {
     // Route-level express.json({ limit: PRELOAD_BODY_LIMIT }) only takes effect if
-    // registerCmcRoutes is called BEFORE the global express.json() middleware.
-    // Express parses in registration order: the route's 50mb parser runs first,
-    // sets req._body, and the later global 100kb parser no-ops. This allows
-    // /cmc/preload to accept large ZPL payloads while other endpoints keep the
-    // strict default limit. Do not move this registration after global middleware.
+    // registerCmcRoutes is called BEFORE the global express.json() middleware in
+    // main.js. This is not a case of the route-level parser running first and the
+    // later global parser then running harmlessly as a no-op: the handler below
+    // calls res.json(...) and returns, ending the response, so the global parser
+    // is never reached at all for this request.
+    //
+    // There is a second, independent reason the ordering matters: main.js also
+    // installs a global request logger right after its express.json() that logs
+    // req.body for every request. That logger only avoids writing tens of
+    // megabytes of base64 ZPL into electron-log on every /cmc/preload because
+    // this route's handler already ended the response before the logger's
+    // middleware would run. Moving this registration after that global
+    // middleware would both 413 on real manifests and, on top of that, flood
+    // the log file with every preload's payload. Do not move this registration
+    // after global middleware.
     expressApp.post(
         '/cmc/preload',
         express.json({ limit: PRELOAD_BODY_LIMIT }),
