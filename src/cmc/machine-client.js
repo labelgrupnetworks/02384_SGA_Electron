@@ -50,6 +50,25 @@ function createMachineClient({
     let lastError = null;
     let lastEnqAt = null;
 
+    // Serializes deliveries to the same physical labeler so two boxes handled
+    // close together cannot interleave their ZPL on the wire (some label
+    // printers are line-oriented and will happily merge two concurrent jobs
+    // into garbage output). Keyed by "host:port" rather than by labeler index,
+    // since two configured labelers could point at the same physical device.
+    // Deliberately NOT awaited from handleEnq: this only chains deliverLabels
+    // calls against each other, off the ENQ reply path.
+    const labelerChains = new Map();
+    const withLabelerLock = (labelerHost, labelerPort, task) => {
+        const key = `${labelerHost}:${labelerPort}`;
+        const previous = labelerChains.get(key) ?? Promise.resolve();
+        const settled = previous.catch(() => {}).then(task);
+        // Stored with errors swallowed so one failed job never poisons the
+        // chain for the next box; the real result/error still flows to the
+        // caller through the returned `settled` promise.
+        labelerChains.set(key, settled.catch(() => {}));
+        return settled;
+    };
+
     const report = (result) => {
         try {
             const outcome = onResult({ occurred_at: nowIso(), ...result });
@@ -70,7 +89,13 @@ function createMachineClient({
     const write = (payload) => {
         if (socket && !socket.destroyed) {
             socket.write(frame(payload));
+            return;
         }
+        // report() upstream of this still records the ENQ as "accepted"
+        // (that decision was made from the cache lookup, independent of the
+        // link), so this is the only signal that the reply never actually
+        // reached the machine.
+        logger.warn('⚠️ [cmc] write skipped: no live connection to the machine');
     };
 
     // Runs after the reply is already on the wire. Errors here are recorded
@@ -88,11 +113,11 @@ function createMachineClient({
             }
 
             try {
-                await deliver({
+                await withLabelerLock(labeler.host, labeler.port, () => deliver({
                     host: labeler.host,
                     port: labeler.port,
                     content: Buffer.from(payload.content_base64, 'base64').toString(ENCODING),
-                });
+                }));
             } catch (error) {
                 report({
                     barcode: entry.barcode, phase: 'deliver', status: 'error',

@@ -146,6 +146,48 @@ test('a labeler failure is reported as an error without breaking the loop', asyn
     }
 });
 
+test('deliveries to the same labeler are serialized, so two boxes cannot interleave on the wire', async () => {
+    const machine = await createFakeCmcMachine();
+    const cache = createManifestCache();
+    cache.replace({ batch_id: 'B1', entries: [entry('111'), entry('222')] });
+    const results = [];
+    let active = 0;
+    let maxActive = 0;
+    const order = [];
+    const deliver = async (args) => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        order.push(`start:${args.content}`);
+        await new Promise((r) => setTimeout(r, 50));
+        order.push(`end:${args.content}`);
+        active -= 1;
+    };
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache,
+        labelers: [{ host: '127.0.0.1', port: 9100 }], logger: silentLogger,
+        onResult: (r) => results.push(r), deliver,
+    });
+
+    try {
+        await client.start();
+        machine.send('ENQ|111');
+        // Give the first delivery time to be picked up and start its 50ms
+        // wait, but not enough to finish it, before firing the second ENQ.
+        await new Promise((r) => setTimeout(r, 10));
+        machine.send('ENQ|222');
+        await new Promise((r) => setTimeout(r, 150));
+
+        assert.equal(maxActive, 1, 'the two deliveries to the same labeler must never overlap');
+        assert.deepEqual(order, [
+            'start:^XA111^XZ', 'end:^XA111^XZ',
+            'start:^XA222^XZ', 'end:^XA222^XZ',
+        ]);
+    } finally {
+        await client.stop();
+        await machine.close();
+    }
+});
+
 test('an ACK is reported for traceability', async () => {
     const machine = await createFakeCmcMachine();
     const ctx = setup();
