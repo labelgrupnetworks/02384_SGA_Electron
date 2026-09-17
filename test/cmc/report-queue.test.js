@@ -133,16 +133,36 @@ test('flush sends at most batchSize results per call', async () => {
     assert.equal(queue.size(), 1);
 });
 
-test('a hung fetch times out and keeps items', async () => {
+test('a hung fetch times out and keeps items, and the same queue can flush right after', async () => {
+    const calls = [];
+    // 'hang' only settles when the real AbortSignal actually fires (mirrors
+    // what a real fetch() implementation does on cancellation) rather than
+    // reacting to `options.signal` merely being present, which is always
+    // true since flush() always passes one. Switched to 'succeed' after the
+    // abort to prove the `flushing` guard was released on the SAME queue
+    // instance, instead of standing up a second queue with a different temp
+    // dir that never touched the guard being tested.
+    let behavior = 'hang';
     const queue = createReportQueue({
         baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't',
         logger: silentLogger,
         fetchImpl: async (url, options) => {
-            // Simulate abort signal being triggered by timeout
-            if (options.signal) {
-                throw new Error('The operation was aborted');
+            if (behavior === 'hang') {
+                return new Promise((resolve, reject) => {
+                    // AbortSignal.timeout()'s own internal timer is unref'd,
+                    // so with nothing else pending, Node would consider the
+                    // event loop idle and exit before the abort ever fires.
+                    // This ref'd keep-alive timer only holds the process
+                    // open; the actual abort decision still comes solely
+                    // from `options.signal` firing.
+                    const keepAlive = setInterval(() => {}, 1000);
+                    options.signal.addEventListener('abort', () => {
+                        clearInterval(keepAlive);
+                        reject(new Error('The operation was aborted'));
+                    });
+                });
             }
-            return new Promise(() => {}); // never settles
+            return okFetch(calls)(url, options);
         },
         timeoutMs: 50,
     });
@@ -150,20 +170,15 @@ test('a hung fetch times out and keeps items', async () => {
     queue.push(result('111'));
     await queue.flush();
 
-    // Items preserved after timeout abort
+    // Items preserved after a genuine timeout abort.
     assert.equal(queue.size(), 1);
 
-    // Subsequent flush should work (guard was released)
-    const calls = [];
-    const successQueue = createReportQueue({
-        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't',
-        logger: silentLogger, fetchImpl: okFetch(calls),
-    });
-    successQueue.push(result('111'));
-    await successQueue.flush();
+    // Guard released: the same queue must flush successfully right after.
+    behavior = 'succeed';
+    await queue.flush();
 
     assert.equal(calls.length, 1);
-    assert.equal(successQueue.size(), 0);
+    assert.equal(queue.size(), 0);
 });
 
 test('flushing guard prevents concurrent flush calls', async () => {
@@ -203,4 +218,76 @@ test('flushing guard prevents concurrent flush calls', async () => {
     // Only one network call should have been made despite two flush() invocations
     assert.equal(calls.length, 1);
     assert.equal(queue.size(), 0);
+});
+
+test('start() backs off exponentially on repeated failures, capped at maxBackoffMs', async () => {
+    const timestamps = [];
+    const queue = createReportQueue({
+        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't', logger: silentLogger,
+        flushMs: 15,
+        maxBackoffMs: 60,
+        fetchImpl: async () => {
+            timestamps.push(Date.now());
+            return { ok: false, status: 500 };
+        },
+    });
+
+    queue.push(result('111'));
+    queue.start();
+    // Enough real time for several attempts: 15, 30, 60, 60, 60... capped.
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    queue.stop();
+
+    assert.ok(timestamps.length >= 4, `expected several retries, got ${timestamps.length}`);
+    const gaps = [];
+    for (let i = 1; i < timestamps.length; i += 1) {
+        gaps.push(timestamps[i] - timestamps[i - 1]);
+    }
+
+    // The first retry follows close to flushMs...
+    assert.ok(gaps[0] < 45, `first gap should be near flushMs (15ms), got ${gaps[0]}`);
+    // ...later gaps grow well past it as failures keep piling up...
+    const lastGap = gaps[gaps.length - 1];
+    assert.ok(lastGap > gaps[0], `backoff should have grown, first=${gaps[0]} last=${lastGap}`);
+    // ...but never past the cap (with generous slack for scheduler jitter).
+    assert.ok(lastGap <= 120, `backoff must be capped near maxBackoffMs (60ms), got ${lastGap}`);
+});
+
+test('a successful flush resets the backoff delay back to flushMs', async () => {
+    const timestamps = [];
+    let callCount = 0;
+    const queue = createReportQueue({
+        baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't', logger: silentLogger,
+        flushMs: 15,
+        maxBackoffMs: 500,
+        fetchImpl: async () => {
+            callCount += 1;
+            timestamps.push(Date.now());
+            // Fail enough times to build up real backoff, then start
+            // succeeding — but keep succeeding so the queue stays non-empty
+            // (a new item is pushed after each success) and start()'s loop
+            // keeps scheduling attempts at whatever delay it currently holds.
+            return callCount <= 2 ? { ok: false, status: 500 } : { ok: true, status: 200 };
+        },
+    });
+
+    queue.push(result('111'));
+    queue.start();
+
+    // Let it fail twice (backing off past flushMs), then succeed once.
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    // Re-arm the queue with fresh work so the loop keeps attempting.
+    queue.push(result('222'));
+    const attemptsBeforeReset = callCount;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    queue.stop();
+
+    // After the reset, the next attempt should follow quickly (close to
+    // flushMs) instead of waiting out the much longer backoff the earlier
+    // failures had built up — observable as extra attempts fitting inside
+    // this short window.
+    assert.ok(
+        callCount > attemptsBeforeReset,
+        `expected at least one more attempt shortly after the reset, had ${attemptsBeforeReset}, now ${callCount}`,
+    );
 });

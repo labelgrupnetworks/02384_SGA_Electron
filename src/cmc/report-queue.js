@@ -6,6 +6,11 @@ const FILE_NAME = 'cmc-report-queue.json';
 const DEFAULT_FLUSH_MS = 5000;
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_TIMEOUT_MS = 4500;
+// Caps how long a fully-down Verentia backend makes the bridge wait between
+// retries. Without a cap, doubling forever would eventually mean waiting
+// hours between attempts; a few minutes keeps recovery reasonably prompt
+// once the backend comes back, while still backing off a busy/erroring one.
+const DEFAULT_MAX_BACKOFF_MS = 180_000;
 
 /**
  * Outbound results, queued on disk.
@@ -27,10 +32,17 @@ function createReportQueue({
     flushMs = DEFAULT_FLUSH_MS,
     batchSize = DEFAULT_BATCH_SIZE,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxBackoffMs = DEFAULT_MAX_BACKOFF_MS,
 }) {
     const filePath = path.join(baseDir, FILE_NAME);
     let timer = null;
     let flushing = false;
+    // Backing off on a per-attempt basis rather than retrying at a fixed
+    // interval: a Verentia outage that lasts minutes should not be hammered
+    // every `flushMs`. Resets to `flushMs` the moment a flush succeeds, so a
+    // recovered backend is noticed again promptly instead of staying on a
+    // long-delay schedule from the earlier outage.
+    let currentDelayMs = flushMs;
 
     const load = () => {
         try {
@@ -97,6 +109,7 @@ function createReportQueue({
 
                 if (!response.ok) {
                     logger.warn(`⚠️ [cmc] Verentia responded ${response.status} to report; will retry`);
+                    currentDelayMs = Math.min(currentDelayMs * 2, maxBackoffMs);
                     return;
                 }
 
@@ -104,8 +117,10 @@ function createReportQueue({
                 pending = pending.filter((item) => !sent.has(item.id));
                 persist();
                 logger.info(`📤 [cmc] ${batch.length} results reported`);
+                currentDelayMs = flushMs;
             } catch (error) {
                 logger.warn(`⚠️ [cmc] failed to report, will retry: ${error.message}`);
+                currentDelayMs = Math.min(currentDelayMs * 2, maxBackoffMs);
             } finally {
                 flushing = false;
             }
@@ -113,13 +128,19 @@ function createReportQueue({
 
         start() {
             if (timer) return;
-            timer = setInterval(() => { queue.flush().catch(() => {}); }, flushMs);
-            if (typeof timer.unref === 'function') timer.unref();
+            const scheduleNext = () => {
+                timer = setTimeout(async () => {
+                    await queue.flush().catch(() => {});
+                    scheduleNext();
+                }, currentDelayMs);
+                if (typeof timer.unref === 'function') timer.unref();
+            };
+            scheduleNext();
         },
 
         stop() {
             if (timer) {
-                clearInterval(timer);
+                clearTimeout(timer);
                 timer = null;
             }
         },
@@ -128,4 +149,4 @@ function createReportQueue({
     return queue;
 }
 
-module.exports = { createReportQueue, DEFAULT_FLUSH_MS, DEFAULT_BATCH_SIZE, DEFAULT_TIMEOUT_MS };
+module.exports = { createReportQueue, DEFAULT_FLUSH_MS, DEFAULT_BATCH_SIZE, DEFAULT_TIMEOUT_MS, DEFAULT_MAX_BACKOFF_MS };
