@@ -5,6 +5,15 @@ const {
 const { sendZpl } = require('./labeler-client');
 
 const DEFAULT_RECONNECT_MS = 5000;
+// Bounds the TCP handshake itself. Without this, a blackholed SYN (a firewall
+// or NAT silently dropping packets instead of refusing the connection) would
+// leave `connect()` waiting on an event that never fires, occupying
+// `pendingSocket` indefinitely instead of scheduling a retry.
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+// Once connected, this is the mechanism that detects a half-open link (machine
+// powered off, cable pulled, NAT mapping silently expired): TCP itself has no
+// way to notice a peer that stopped acknowledging without probing for it.
+const KEEPALIVE_DELAY_MS = 30_000;
 
 function nowIso() {
     return new Date().toISOString();
@@ -27,6 +36,7 @@ function createMachineClient({
     onResult = () => {},
     deliver = sendZpl,
     reconnectMs = DEFAULT_RECONNECT_MS,
+    connectTimeoutMs = DEFAULT_CONNECT_TIMEOUT_MS,
 }) {
     let socket = null;
     // Tracks a connection attempt that hasn't finished its handshake yet, so
@@ -171,10 +181,35 @@ function createMachineClient({
                 reject(error);
             };
 
+            // A missing/invalid host or port would otherwise throw
+            // synchronously inside this executor, bypassing onConnectError
+            // entirely: the promise would reject but lastError would stay
+            // null and scheduleReconnect() would never run, so a
+            // misconfigured machine block looks identical to "never tried
+            // yet" instead of a reported, retried failure.
+            if (!host || !Number.isInteger(port)) {
+                onConnectError(new Error(`invalid machine address: host=${host} port=${port}`));
+                return;
+            }
+
             next.once('error', onConnectError);
+
+            // Bounds the handshake itself (see DEFAULT_CONNECT_TIMEOUT_MS above).
+            next.setTimeout(connectTimeoutMs);
+            const onConnectTimeout = () => {
+                onConnectError(new Error(`connection to ${host}:${port} timed out after ${connectTimeoutMs}ms`));
+            };
+            next.once('timeout', onConnectTimeout);
 
             next.connect(port, host, () => {
                 next.removeListener('error', onConnectError);
+                next.removeListener('timeout', onConnectTimeout);
+                // The timeout above only exists to bound the handshake. A
+                // healthy, merely idle connection must not be killed by it,
+                // so it is cleared the moment the handshake completes;
+                // keepalive (below) takes over as the mechanism for
+                // detecting a half-open link once adopted.
+                next.setTimeout(0);
                 clearPending();
 
                 // The client was stopped while this handshake was still in
@@ -190,6 +225,11 @@ function createMachineClient({
                 socket = next;
                 connected = true;
                 lastError = null;
+                // See KEEPALIVE_DELAY_MS above: without this, a machine that
+                // goes dark (power off, cable pulled, NAT idle-timeout) never
+                // produces a 'close' event on its own, so `connected` would
+                // keep reading true and writes would vanish silently.
+                next.setKeepAlive(true, KEEPALIVE_DELAY_MS);
                 logger.info(`🔌 [cmc] connected to machine ${host}:${port}`);
 
                 next.on('data', (chunk) => {
@@ -251,4 +291,4 @@ function createMachineClient({
     };
 }
 
-module.exports = { createMachineClient, DEFAULT_RECONNECT_MS };
+module.exports = { createMachineClient, DEFAULT_RECONNECT_MS, DEFAULT_CONNECT_TIMEOUT_MS };

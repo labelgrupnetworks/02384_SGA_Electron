@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const net = require('node:net');
 const { createFakeCmcMachine } = require('../helpers/fake-cmc-machine');
 const { createManifestCache } = require('../../src/cmc/manifest-cache');
 const { createMachineClient } = require('../../src/cmc/machine-client');
@@ -293,6 +294,100 @@ test('an onResult that rejects asynchronously does not break the ENQ loop', asyn
         assert.equal(unhandled.length, 0, 'onResult rejection must not surface as an unhandled rejection');
     } finally {
         process.removeListener('unhandledRejection', onUnhandledRejection);
+        await client.stop();
+        await machine.close();
+    }
+});
+
+test('the adopted socket has keepalive enabled, so a half-open link can be detected', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+
+    // net.Socket has no public getter for its keepalive state, so the only way
+    // to observe that connect() called setKeepAlive on the socket it actually
+    // adopts is to intercept the call itself.
+    const calls = [];
+    const originalSetKeepAlive = net.Socket.prototype.setKeepAlive;
+    net.Socket.prototype.setKeepAlive = function patchedSetKeepAlive(...args) {
+        calls.push(args);
+        return originalSetKeepAlive.apply(this, args);
+    };
+
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: (r) => ctx.results.push(r), deliver: ctx.deliver,
+    });
+
+    try {
+        await client.start();
+
+        assert.equal(calls.length, 1, 'setKeepAlive must be called exactly once, on the adopted socket');
+        assert.deepEqual(calls[0], [true, 30_000]);
+    } finally {
+        net.Socket.prototype.setKeepAlive = originalSetKeepAlive;
+        await client.stop();
+        await machine.close();
+    }
+});
+
+test('a missing machine address is routed through the normal reconnect path instead of throwing synchronously', async () => {
+    const ctx = setup();
+    const client = createMachineClient({
+        host: undefined,
+        port: undefined,
+        cache: ctx.cache,
+        labelers: ctx.labelers,
+        logger: silentLogger,
+        onResult: (r) => ctx.results.push(r),
+        deliver: ctx.deliver,
+        // Long enough that the scheduled retry does not fire before stop().
+        reconnectMs: 10_000,
+    });
+
+    try {
+        // start() must still reject (the caller gets to know the first attempt
+        // failed), but the failure must be recorded the same way any other
+        // connect failure is, not bypass it via a synchronous throw.
+        await assert.rejects(() => client.start(), /invalid machine address/);
+
+        const state = client.state();
+        assert.equal(state.connected, false);
+        assert.match(state.last_error, /invalid machine address/);
+    } finally {
+        await client.stop();
+    }
+});
+
+test('the client reconnects on its own after the connection drops', async () => {
+    const machine = await createFakeCmcMachine();
+    const ctx = setup();
+    const client = createMachineClient({
+        host: '127.0.0.1', port: machine.port, cache: ctx.cache,
+        labelers: ctx.labelers, logger: silentLogger,
+        onResult: (r) => ctx.results.push(r), deliver: ctx.deliver,
+        reconnectMs: 100,
+    });
+
+    try {
+        await client.start();
+        assert.equal(client.state().connected, true);
+
+        machine.dropConnection();
+        await new Promise((r) => setTimeout(r, 50));
+        assert.equal(client.state().connected, false);
+
+        // Wait past reconnectMs for the scheduled attempt to land, then prove
+        // the reconnect is real (the fake machine accepted a fresh connection
+        // and answers ENQ again), not merely that connected flipped back to
+        // true by accident.
+        await new Promise((r) => setTimeout(r, 400));
+        assert.equal(client.state().connected, true);
+
+        const pending = machine.next();
+        machine.send('ENQ|111');
+        assert.equal(await pending, buildEnqReply({ accepted: true }));
+    } finally {
         await client.stop();
         await machine.close();
     }
