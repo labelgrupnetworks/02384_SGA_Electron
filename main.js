@@ -70,6 +70,13 @@ let serverInstance = null;
 let cmcCache = null;
 let cmcMachine = null;
 let cmcReportQueue = null;
+// Shared shape for "no machine client running" (cmc disabled, or not yet
+// configured), used both by the HTTP /cmc/status route and the socket.io
+// 'cmc-status' event below. Kept in one place and matched field-for-field
+// against machine-client.js's real state() (connected, last_error,
+// last_enq_at) so callers cannot tell disabled-cmc apart from a machine that
+// simply hasn't ENQ'd yet by an extra/missing field.
+const CMC_DISABLED_STATE = { connected: false, last_error: "cmc disabled", last_enq_at: null };
 let updateStatus = {
     lastCheck: null,
     updateAvailable: false,
@@ -364,7 +371,9 @@ function setupServer() {
 
     registerCmcRoutes(expressApp, logger, {
         cache: cmcCache,
-        machineState: () => (cmcMachine ? cmcMachine.state() : { connected: false, last_error: "cmc disabled" }),
+        machineState: () => (cmcMachine ? cmcMachine.state() : CMC_DISABLED_STATE),
+        queuedReports: () => cmcReportQueue.size(),
+        enabled: Boolean(cmcConfig.enabled),
     });
 
     // Middleware para parsear JSON - DEBE ir ANTES de las rutas
@@ -394,7 +403,7 @@ function setupServer() {
         const emitCmcStatus = () => {
             socket.emit("cmc-status", {
                 manifest: cmcCache.state(),
-                machine: cmcMachine ? cmcMachine.state() : { connected: false, last_error: "cmc disabled" },
+                machine: cmcMachine ? cmcMachine.state() : CMC_DISABLED_STATE,
                 queued_reports: cmcReportQueue.size(),
             });
         };

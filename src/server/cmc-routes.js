@@ -26,7 +26,9 @@ function fail(res, error) {
     return res.status(httpStatusFor(normalized.code)).json({ success: false, error: normalized });
 }
 
-function registerCmcRoutes(expressApp, logger, { cache, machineState }) {
+function registerCmcRoutes(expressApp, logger, {
+    cache, machineState, queuedReports = () => 0, enabled = false,
+}) {
     // Route-level express.json({ limit: PRELOAD_BODY_LIMIT }) only takes effect if
     // registerCmcRoutes is called BEFORE the global express.json() middleware in
     // main.js. This is not a case of the route-level parser running first and the
@@ -63,8 +65,13 @@ function registerCmcRoutes(expressApp, logger, { cache, machineState }) {
     expressApp.get('/cmc/status', (req, res) => {
         res.json({
             success: true,
+            enabled,
             manifest: cache.state(),
             machine: machineState(),
+            // Same figure the socket.io 'cmc-status' event already reports
+            // (see main.js's emitCmcStatus); HTTP polling had no way to see
+            // it before, only the live socket connection did.
+            queued_reports: queuedReports(),
         });
     });
 }
