@@ -20,7 +20,7 @@ function createStore(baseDir, logger = null) {
         if (logger && typeof logger.warn === 'function') logger.warn(message);
     };
 
-    return {
+    const store = {
         path: filePath,
 
         /**
@@ -61,7 +61,25 @@ function createStore(baseDir, logger = null) {
             fs.mkdirSync(baseDir, { recursive: true });
             fs.writeFileSync(filePath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
         },
+
+        /**
+         * Writes a single key without disturbing the rest of the file.
+         *
+         * `write()` overwrites the whole file, so a caller that only knows about
+         * one key (like the interface picker) would silently wipe out any other
+         * block already stored there (e.g. the `cmc` config). This reads the
+         * current contents first and writes back the merge, so sibling keys
+         * survive.
+         */
+        set(key, value) {
+            const current = store.read();
+            current[key] = value;
+            store.write(current);
+            return current;
+        },
     };
+
+    return store;
 }
 
 module.exports = { createStore };

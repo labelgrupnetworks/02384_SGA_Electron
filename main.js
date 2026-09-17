@@ -271,7 +271,10 @@ ipcMain.handle("choose-interface", (event, name) => {
     // handler needs a definite { saved: false } to tell the operator nothing was
     // stored, rather than an unhandled rejection that leaves the window looking stuck.
     try {
-        getConfigStore().write({ interface: name });
+        // set() merges into the existing settings file rather than overwriting
+        // it outright, so a sibling `cmc` config block already on disk survives
+        // this write instead of being silently wiped out.
+        getConfigStore().set('interface', name);
     } catch (error) {
         logger.error(`❌ No se pudo guardar la interfaz elegida (${name}): ${error.message}`);
         return { saved: false, reason: "write_failed" };

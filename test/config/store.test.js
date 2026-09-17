@@ -69,6 +69,28 @@ test('null reads as unconfigured', () => {
     assert.deepEqual(store.read(), {});
 });
 
+test('set() writes one key while preserving unrelated keys already on disk', () => {
+    const store = createStore(tempDir());
+
+    // Simulates a `cmc` config block already present, written by something
+    // other than the interface picker.
+    store.write({ cmc: { enabled: true, machine: { host: '10.0.0.5', port: 4000 } }, interface: 'eth0' });
+
+    store.set('interface', 'wlan0');
+
+    const settings = store.read();
+    assert.equal(settings.interface, 'wlan0');
+    assert.deepEqual(settings.cmc, { enabled: true, machine: { host: '10.0.0.5', port: 4000 } });
+});
+
+test('set() on an empty store creates the file with just that key', () => {
+    const store = createStore(tempDir());
+
+    store.set('interface', 'eth0');
+
+    assert.deepEqual(store.read(), { interface: 'eth0' });
+});
+
 test('path points inside the given directory', () => {
     const dir = tempDir();
     const store = createStore(dir);
