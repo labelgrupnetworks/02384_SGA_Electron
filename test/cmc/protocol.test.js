@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
     frame, createFrameReader, parseMessage, buildEnqReply, STX, ETX, MAX_FRAME_BYTES,
+    RESULT_GOOD, RESULT_NOT_FOUND,
 } = require('../../src/cmc/protocol');
 
 test('frame wraps the payload in STX and ETX', () => {
@@ -35,10 +36,12 @@ test('the reader drops bytes sitting outside a frame', () => {
     assert.deepEqual(read(Buffer.concat([Buffer.from('noise'), frame('ENQ|1')])), ['ENQ|1']);
 });
 
-test('parseMessage splits type and fields', () => {
-    assert.deepEqual(parseMessage('ENQ|00012345'), { type: 'ENQ', fields: ['00012345'] });
-    assert.deepEqual(parseMessage('ACK|00012345|REJECTED_SIZE'), {
-        type: 'ACK', fields: ['00012345', 'REJECTED_SIZE'],
+test('parseMessage splits the documented head from the fields of any message', () => {
+    assert.deepEqual(parseMessage('5555|ACK|8|00012345|REJECTED_SIZE|'), {
+        machineId: '5555',
+        type: 'ACK',
+        counter: '8',
+        fields: ['00012345', 'REJECTED_SIZE'],
     });
 });
 
@@ -46,8 +49,10 @@ test('parseMessage rejects an empty payload', () => {
     assert.throws(() => parseMessage(''), /empty message/);
 });
 
-test('buildEnqReply distinguishes accept from reject', () => {
-    assert.notEqual(buildEnqReply({ accepted: true }), buildEnqReply({ accepted: false }));
+test('buildEnqReply reports a known box as Good Item and an unknown one as not found', () => {
+    const head = { machineId: '5555', counter: '7', barcode: '200001234' };
+    assert.equal(buildEnqReply({ ...head, found: true }).split('|')[4], RESULT_GOOD);
+    assert.equal(buildEnqReply({ ...head, found: false }).split('|')[4], RESULT_NOT_FOUND);
 });
 
 test('the reader discards unterminated frames exceeding MAX_FRAME_BYTES and recovers', () => {
@@ -61,4 +66,40 @@ test('the reader discards unterminated frames exceeding MAX_FRAME_BYTES and reco
     assert.deepEqual(read(oversizeChunk), []);
     // Feed a well-formed frame and verify the reader recovers
     assert.deepEqual(read(frame('ENQ|recovery')), ['ENQ|recovery']);
+});
+
+// --- CMC-DataProtocol 4.1 conformance -------------------------------------
+// Frame layout, field order and the reply example below are taken verbatim
+// from CMC-DataProtocol_4.1.pdf, sections FRAME / MESSAGE "ENQ" / MESSAGE "enq".
+
+test('parseMessage reads the machine id, the type and the counter of a documented ENQ', () => {
+    // <stx>5555|ENQ|7|200001234|0|<etx> — the example in section MESSAGE "ENQ".
+    assert.deepEqual(parseMessage('5555|ENQ|7|200001234|0|'), {
+        machineId: '5555',
+        type: 'ENQ',
+        counter: '7',
+        fields: ['200001234', '0'],
+    });
+});
+
+test('buildEnqReply reproduces the reply example of the protocol document', () => {
+    assert.equal(
+        buildEnqReply({
+            machineId: '5555',
+            counter: '7',
+            reference: 'ref000ABCD',
+            found: true,
+            barcode: '200001234',
+            selective: '11000000',
+            printLabel1: true,
+            matchLabel1: 'refLAB1',
+            description: 'Book',
+        }),
+        '5555|enq|7|ref000ABCD|1|200001234|11000000||1||||refLAB1|||Book||||||'
+    );
+});
+
+test('MAX_FRAME_BYTES honours the documented 32Kb ceiling', () => {
+    // "Any message cannot be longer than 32Kb" — section Be carefully.
+    assert.equal(MAX_FRAME_BYTES, 32768);
 });

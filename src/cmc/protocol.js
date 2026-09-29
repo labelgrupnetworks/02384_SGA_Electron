@@ -3,28 +3,37 @@ const ETX = 0x03;
 const SEPARATOR = '|';
 const ENCODING = 'latin1';
 
-// PENDING: the real protocol's maximum frame size is unconfirmed. Real frames
-// (a barcode, or a barcode plus a status token) are tens of bytes. This is a
-// generous provisional bound. If a frame opened with STX never closes with ETX,
-// and its buffered run exceeds this limit, the buffer is discarded and scanning
-// resumes for the next STX, treating the unterminated run as noise.
-const MAX_FRAME_BYTES = 65536;
+// CMC-DataProtocol_4.1.pdf, section "Be carefully": "Any message cannot be
+// longer than 32Kb". If a frame opened with STX never closes with ETX, and its
+// buffered run exceeds this limit, the buffer is discarded and scanning resumes
+// for the next STX, treating the unterminated run as noise.
+const MAX_FRAME_BYTES = 32768;
 
-// PENDING: the field separator, the reply tokens below and the exact set of
-// message types are provisional. CMC-DataProtocol_4.1.pdf has not been read in
-// full, and REQ-bsalamanca-023 mentions a "custom CMC message" that may differ
-// from the manufacturer's generic protocol. Everything uncertain is kept in this
-// file on purpose: when the real contract arrives, nothing outside it changes.
+// The message catalogue of the protocol document. Capitalised names are
+// requests (machine to CIS) and their lower-case twin is the reply the CIS must
+// send back: every message is paired.
+//
+// One documented inconsistency: MESSAGE "ENQ" states MSG_TYPE is 3 chars fixed,
+// while the labelling messages are defined as LAB1/LAB2/LAB3, which are four.
+// The section names are taken as authoritative here; confirm against CMCDPsim.
 const MESSAGE_TYPES = Object.freeze({
-    ENQ: 'ENQ',   // machine asks what to do with a barcode
+    ENQ: 'ENQ',    // barcode read at the start of the line
+    IND: 'IND',    // induction
+    ACK: 'ACK',    // induction outcome, after the 3D bars
+    INV: 'INV',    // print the invoice on the laser printer
+    LAB1: 'LAB1',  // box approaching labeller 1
+    LAB2: 'LAB2',  // box approaching labeller 2
+    LAB3: 'LAB3',  // box approaching labeller 3
+    END: 'END',    // end of cycle
+    REM: 'REM',    // remove
+    HBT: 'HBT',    // heartbeat
+    STS: 'STS',    // status
     ENQ_REPLY: 'enq',
-    LABEL: 'LAB',  // recognized message-type identifier (labels travel over separate TCP, not this link)
-    ACK: 'ACK',   // machine reports the induction outcome
 });
 
-// PENDING: confirm the accept/reject tokens against the protocol document.
-const ENQ_ACCEPT = 'A';
-const ENQ_REJECT = 'R';
+// MSG_RESULT of the `enq' reply: "0 = Error/Not found  1 = Good Item".
+const RESULT_GOOD = '1';
+const RESULT_NOT_FOUND = '0';
 
 function frame(payload) {
     return Buffer.concat([
@@ -76,21 +85,104 @@ function createFrameReader() {
     };
 }
 
+/**
+ * Splits a frame payload into its documented head and the rest of its fields.
+ *
+ * The frame is `MACHINE_ID|TYPE|COUNTER|...`, so the type is the SECOND field,
+ * not the first. `fields` holds what follows the counter, which is what each
+ * message type defines for itself — for an ENQ, the barcode and its source.
+ *
+ * The machine id and the counter are returned because the reply has to echo
+ * them back: the document defines them as "replicated by" the request.
+ */
 function parseMessage(payload) {
     if (typeof payload !== 'string' || payload.length === 0) {
         throw new Error('empty message');
     }
 
-    const [type, ...fields] = payload.split(SEPARATOR);
+    const parts = payload.split(SEPARATOR);
 
-    return { type, fields };
+    // Every field is closed by the separator, the last one included, so the
+    // split leaves one empty element past the final field. That element is the
+    // terminator, not a field: an empty value the message really carries is the
+    // one before it.
+    if (payload.endsWith(SEPARATOR)) {
+        parts.pop();
+    }
+
+    const [machineId, type, counter, ...fields] = parts;
+
+    return { machineId, type, counter, fields };
 }
 
-function buildEnqReply({ accepted }) {
-    return [MESSAGE_TYPES.ENQ_REPLY, accepted ? ENQ_ACCEPT : ENQ_REJECT].join(SEPARATOR);
+/**
+ * Builds the `enq' reply: 21 fields, each followed by the separator.
+ *
+ * Only what this bridge knows is populated; the document requires every other
+ * field to travel empty rather than be omitted, which is why the shape is fixed
+ * here and not assembled by the caller.
+ *
+ * @param {object} reply
+ * @param {string} reply.machineId  replicated from the ENQ
+ * @param {string} reply.counter    replicated from the ENQ
+ * @param {string} reply.barcode    replicated from the ENQ
+ * @param {boolean} reply.found     MSG_RESULT: a known box, or not found
+ */
+function buildEnqReply({
+    machineId = '',
+    counter = '',
+    reference = '',
+    found = false,
+    barcode = '',
+    selective = '',
+    invoicePages = '',
+    printLabel1 = false,
+    printLabel2 = false,
+    printLabel3 = false,
+    matchInvoice = '',
+    matchLabel1 = '',
+    matchLabel2 = '',
+    matchLabel3 = '',
+    description = '',
+    boxLow = '',
+    packject = '',
+    cardboardChannel = '',
+    sorter = '',
+    hazmatLabel = '',
+} = {}) {
+    const flag = (on) => (on ? '1' : '');
+
+    const fields = [
+        machineId,
+        MESSAGE_TYPES.ENQ_REPLY,
+        counter,
+        reference,
+        found ? RESULT_GOOD : RESULT_NOT_FOUND,
+        barcode,
+        selective,
+        invoicePages,
+        flag(printLabel1),
+        flag(printLabel2),
+        flag(printLabel3),
+        matchInvoice,
+        matchLabel1,
+        matchLabel2,
+        matchLabel3,
+        description,
+        boxLow,
+        packject,
+        cardboardChannel,
+        sorter,
+        hazmatLabel,
+    ];
+
+    // Every field is closed by the separator, the trailing one included: the
+    // document's own examples end with "|" immediately before ETX.
+    return fields.join(SEPARATOR) + SEPARATOR;
 }
 
 module.exports = {
     STX, ETX, SEPARATOR, ENCODING, MESSAGE_TYPES, MAX_FRAME_BYTES,
+    RESULT_GOOD, RESULT_NOT_FOUND,
     frame, createFrameReader, parseMessage, buildEnqReply,
 };

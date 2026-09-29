@@ -8,6 +8,17 @@ const { parseMessage, buildEnqReply } = require('../../src/cmc/protocol');
 
 const silentLogger = { info() {}, warn() {}, error() {}, log() {} };
 
+// Frames as CMC-DataProtocol 4.1 defines them: MACHINE_ID|TYPE|COUNTER|...
+// and every field, the last one included, closed by the separator.
+const MACHINE_ID = '5555';
+const COUNTER = '7';
+
+const enq = (barcode) => `${MACHINE_ID}|ENQ|${COUNTER}|${barcode}|0|`;
+
+const reply = (barcode, found) => buildEnqReply({
+    machineId: MACHINE_ID, counter: COUNTER, barcode, found, printLabel1: found,
+});
+
 const entry = (barcode) => ({
     barcode,
     label_payloads: [{
@@ -36,9 +47,9 @@ test('an ENQ for a known barcode is accepted', async () => {
     try {
         await client.start();
         const pending = machine.next();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
 
-        assert.equal(await pending, buildEnqReply({ accepted: true }));
+        assert.equal(await pending, reply('111', true));
     } finally {
         await client.stop();
         await machine.close();
@@ -57,9 +68,9 @@ test('an ENQ for an unknown barcode is rejected and reported', async () => {
     try {
         await client.start();
         const pending = machine.next();
-        machine.send('ENQ|999');
+        machine.send(enq('999'));
 
-        assert.equal(await pending, buildEnqReply({ accepted: false }));
+        assert.equal(await pending, reply('999', false));
         await new Promise((r) => setTimeout(r, 50));
         const reported = ctx.results.find((r) => r.barcode === '999');
         assert.equal(reported.status, 'unknown');
@@ -83,7 +94,7 @@ test('the ENQ reply is not delayed by a slow labeler', async () => {
         await client.start();
         const startedAt = Date.now();
         const pending = machine.next();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
         await pending;
 
         // The whole point of the design: the cache lookup answers, delivery waits.
@@ -106,7 +117,7 @@ test('a known barcode is dispatched to its labeler and reported', async () => {
 
     try {
         await client.start();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
         await new Promise((r) => setTimeout(r, 100));
 
         assert.equal(delivered.length, 1);
@@ -131,15 +142,15 @@ test('a labeler failure is reported as an error without breaking the loop', asyn
 
     try {
         await client.start();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
         await new Promise((r) => setTimeout(r, 100));
 
         assert.ok(ctx.results.some((r) => r.status === 'error' && r.phase === 'deliver'));
 
         // The connection survives: a second ENQ still gets answered.
         const pending = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await pending, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await pending, reply('111', true));
     } finally {
         await client.stop();
         await machine.close();
@@ -170,11 +181,11 @@ test('deliveries to the same labeler are serialized, so two boxes cannot interle
 
     try {
         await client.start();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
         // Give the first delivery time to be picked up and start its 50ms
         // wait, but not enough to finish it, before firing the second ENQ.
         await new Promise((r) => setTimeout(r, 10));
-        machine.send('ENQ|222');
+        machine.send(enq('222'));
         await new Promise((r) => setTimeout(r, 150));
 
         assert.equal(maxActive, 1, 'the two deliveries to the same labeler must never overlap');
@@ -199,7 +210,7 @@ test('an ACK is reported for traceability', async () => {
 
     try {
         await client.start();
-        machine.send('ACK|111|REJECTED_SIZE');
+        machine.send(`${MACHINE_ID}|ACK|8|111|REJECTED_SIZE|`);
         await new Promise((r) => setTimeout(r, 50));
 
         const reported = ctx.results.find((r) => r.phase === 'ack');
@@ -283,15 +294,15 @@ test('an onResult that throws synchronously does not break the ENQ loop', async 
         await client.start();
 
         const first = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await first, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await first, reply('111', true));
 
         // The synchronous throw must not have killed the loop: a second ENQ
         // is still answered. This is the property worth pinning, not merely
         // that the error got logged.
         const second = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await second, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await second, reply('111', true));
     } finally {
         await client.stop();
         await machine.close();
@@ -319,8 +330,8 @@ test('an onResult that rejects asynchronously does not break the ENQ loop', asyn
         await client.start();
 
         const first = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await first, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await first, reply('111', true));
 
         // Give the rejected promise time to surface, so we can confirm it was
         // swallowed by report()'s .catch rather than becoming an unhandled
@@ -330,8 +341,8 @@ test('an onResult that rejects asynchronously does not break the ENQ loop', asyn
         // The property worth pinning: the loop survives and answers the next
         // ENQ, not merely that the rejection got logged.
         const second = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await second, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await second, reply('111', true));
 
         assert.equal(unhandled.length, 0, 'onResult rejection must not surface as an unhandled rejection');
     } finally {
@@ -427,8 +438,8 @@ test('the client reconnects on its own after the connection drops', async () => 
         assert.equal(client.state().connected, true);
 
         const pending = machine.next();
-        machine.send('ENQ|111');
-        assert.equal(await pending, buildEnqReply({ accepted: true }));
+        machine.send(enq('111'));
+        assert.equal(await pending, reply('111', true));
     } finally {
         await client.stop();
         await machine.close();
@@ -470,7 +481,7 @@ test('a transient runtime error does not leave state() reporting a stale last_er
         // Real traffic is the proof the link is healthy again; the stale
         // error must not keep haunting state() once that is established.
         const pending = machine.next();
-        machine.send('ENQ|111');
+        machine.send(enq('111'));
         await pending;
 
         assert.equal(client.state().last_error, null);

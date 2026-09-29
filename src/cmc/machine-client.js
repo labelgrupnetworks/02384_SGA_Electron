@@ -127,14 +127,27 @@ function createMachineClient({
         }
     };
 
-    const handleEnq = (fields) => {
-        const barcode = fields[0] ?? '';
+    const handleEnq = (message) => {
+        const barcode = message.fields[0] ?? '';
         lastEnqAt = nowIso();
 
         const entry = cache.lookup(barcode);
+        const known = Boolean(entry);
 
         // Reply first. Everything below this line is off the critical path.
-        write(buildEnqReply({ accepted: Boolean(entry) }));
+        //
+        // The machine id and the counter travel back untouched: the protocol
+        // defines them as replicated from the request. FLAG_LAB1 is what routes
+        // the box past labeller 1, where the label this bridge delivers over
+        // the labeller's own socket is applied - so an unknown box leaves it
+        // unset and is simply not labelled.
+        write(buildEnqReply({
+            machineId: message.machineId,
+            counter: message.counter,
+            barcode,
+            found: known,
+            printLabel1: known,
+        }));
 
         if (!entry) {
             report({ barcode, phase: 'enq', status: 'unknown', detail: { batch_id: cache.state().batch_id } });
@@ -159,7 +172,7 @@ function createMachineClient({
         }
 
         if (message.type === MESSAGE_TYPES.ENQ) {
-            handleEnq(message.fields);
+            handleEnq(message);
             return;
         }
 
