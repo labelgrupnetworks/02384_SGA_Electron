@@ -1,6 +1,7 @@
 const net = require('node:net');
 const {
-    frame, createFrameReader, parseMessage, buildEnqReply, MESSAGE_TYPES, ENCODING,
+    frame, createFrameReader, parseMessage, buildEnqReply, buildAcknowledgement,
+    buildLabelReply, buildHeartbeatReply, MESSAGE_TYPES, ENCODING,
 } = require('./protocol');
 const { sendZpl } = require('./labeler-client');
 
@@ -70,6 +71,20 @@ function createMachineClient({
     };
 
     const report = (result) => {
+        // Verentia requires a barcode on every result, and only the ENQ carries
+        // one: the rest of the cycle identifies the box by the reference. For a
+        // box that was never in the manifest there is nothing to report under,
+        // and sending an empty string had the backend refuse the whole batch -
+        // taking the valid results travelling with it down too.
+        if (!result.barcode) {
+            logger.warn(
+                `⚠️ [cmc] ${result.phase} for an unknown reference `
+                + `(${result.detail?.reference ?? '?'}): not reported, no barcode to report it under`,
+            );
+
+            return;
+        }
+
         try {
             const outcome = onResult({ occurred_at: nowIso(), ...result });
             // onResult may be async: a synchronous throw is caught above, but a
@@ -97,6 +112,23 @@ function createMachineClient({
         // reached the machine.
         logger.warn('⚠️ [cmc] write skipped: no live connection to the machine');
     };
+
+    // Boxes answered at ENQ time, keyed by the reference this bridge assigned
+    // them. Every later message of the cycle (IND, ACK, LAB1, END) carries that
+    // reference back, and LAB1 is where the label is finally owed, so the box
+    // has to survive in between. Dropped on END, which closes the cycle.
+    const inFlight = new Map();
+    let references = 0;
+
+    /**
+     * The reference the machine will replicate through the rest of the cycle.
+     *
+     * The document has the CIS assign it ("CIS receives the barcode and sends
+     * the info related to the item and assigns a `unique' reference"). Sending
+     * it empty, as this bridge used to, leaves the whole cycle with no
+     * identifier of ours to match a LAB1 back to the box it belongs to.
+     */
+    const nextReference = () => `V${String(++references).padStart(8, '0')}`;
 
     // Runs after the reply is already on the wire. Errors here are recorded
     // against the unit, never propagated into the ENQ path.
@@ -133,6 +165,7 @@ function createMachineClient({
 
         const entry = cache.lookup(barcode);
         const known = Boolean(entry);
+        const reference = nextReference();
 
         // Reply first. Everything below this line is off the critical path.
         //
@@ -141,12 +174,18 @@ function createMachineClient({
         // the box past labeller 1, where the label this bridge delivers over
         // the labeller's own socket is applied - so an unknown box leaves it
         // unset and is simply not labelled.
+        //
+        // MSG_MATCH_LAB1 is the barcode printed on the label, which a reader
+        // after the labeller compares against. The box's own code is what our
+        // labels carry, so it is declared here rather than left for `lab1'.
         write(buildEnqReply({
             machineId: message.machineId,
             counter: message.counter,
+            reference,
             barcode,
             found: known,
             printLabel1: known,
+            matchLabel1: known ? barcode : '',
         }));
 
         if (!entry) {
@@ -154,12 +193,79 @@ function createMachineClient({
             return;
         }
 
-        report({ barcode, phase: 'enq', status: 'accepted', detail: { labels: entry.label_payloads.length } });
-        cache.markDispatched(barcode);
+        // The label is NOT sent here. The protocol owes it when LAB1 arrives,
+        // which is when the box is actually in front of the labeller; sending
+        // it at ENQ time is early by a whole conveyor.
+        inFlight.set(reference, { barcode, entry });
 
-        deliverLabels(entry).catch((error) => {
-            logger.error(`❌ [cmc] delivery crashed for ${barcode}: ${error.message}`);
+        report({ barcode, phase: 'enq', status: 'accepted', detail: { labels: entry.label_payloads.length, reference } });
+        cache.markDispatched(barcode);
+    };
+
+    /**
+     * LAB1/LAB2/LAB3: the box is at a labeller and its label is owed now.
+     *
+     * The reply is due within 1000 ms. If it does not arrive before the box
+     * passes under the tamper the machine rejects it, so the reply goes out
+     * without waiting for the labeller to finish.
+     */
+    const handleLabel = (message, index, replyType) => {
+        const reference = message.fields[0] ?? '';
+        const pending = inFlight.get(reference);
+        const labeler = labelers[index];
+        const deliverable = Boolean(pending) && Boolean(labeler);
+
+        write(buildLabelReply({
+            machineId: message.machineId,
+            type: replyType,
+            counter: message.counter,
+            reference,
+            delivered: deliverable,
+            match: pending?.barcode ?? '',
+        }));
+
+        if (!deliverable) {
+            report({
+                barcode: pending?.barcode ?? '',
+                phase: replyType,
+                status: 'error',
+                detail: { reason: pending ? 'no_labeler_configured' : 'unknown_reference', reference, index },
+            });
+
+            return;
+        }
+
+        deliverLabels(pending.entry).catch((error) => {
+            logger.error(`❌ [cmc] delivery crashed for ${pending.barcode}: ${error.message}`);
         });
+    };
+
+    /**
+     * IND, ACK, END and REM: acknowledged, recorded, and nothing else.
+     *
+     * The machine waits for each of these too. END closes the cycle, so the box
+     * stops being held in memory there.
+     */
+    const handleAcknowledged = (message, replyType) => {
+        const reference = message.fields[0] ?? '';
+
+        write(buildAcknowledgement({
+            machineId: message.machineId,
+            type: replyType,
+            counter: message.counter,
+            reference,
+        }));
+
+        report({
+            barcode: inFlight.get(reference)?.barcode ?? '',
+            phase: replyType,
+            status: 'reported',
+            detail: { reference, fields: message.fields },
+        });
+
+        if (replyType === MESSAGE_TYPES.END_REPLY || replyType === MESSAGE_TYPES.REM_REPLY) {
+            inFlight.delete(reference);
+        }
     };
 
     const handlePayload = (payload) => {
@@ -176,13 +282,35 @@ function createMachineClient({
             return;
         }
 
-        if (message.type === MESSAGE_TYPES.ACK) {
-            report({
-                barcode: message.fields[0] ?? '',
-                phase: 'ack',
-                status: 'reported',
-                detail: { fields: message.fields },
-            });
+        // The labelling messages, in the order the labellers sit on the line:
+        // the index picks which configured labeller the label is sent to.
+        const labelled = {
+            [MESSAGE_TYPES.LAB1]: [0, MESSAGE_TYPES.LAB1_REPLY],
+            [MESSAGE_TYPES.LAB2]: [1, MESSAGE_TYPES.LAB2_REPLY],
+            [MESSAGE_TYPES.LAB3]: [2, MESSAGE_TYPES.LAB3_REPLY],
+        }[message.type];
+
+        if (labelled) {
+            handleLabel(message, labelled[0], labelled[1]);
+            return;
+        }
+
+        const acknowledged = {
+            [MESSAGE_TYPES.IND]: MESSAGE_TYPES.IND_REPLY,
+            [MESSAGE_TYPES.ACK]: MESSAGE_TYPES.ACK_REPLY,
+            [MESSAGE_TYPES.END]: MESSAGE_TYPES.END_REPLY,
+            [MESSAGE_TYPES.REM]: MESSAGE_TYPES.REM_REPLY,
+        }[message.type];
+
+        if (acknowledged) {
+            handleAcknowledged(message, acknowledged);
+            return;
+        }
+
+        if (message.type === MESSAGE_TYPES.HBT) {
+            // Alone among the replies it carries no counter: the machine's own
+            // HBT arrives without one.
+            write(buildHeartbeatReply({ machineId: message.machineId }));
             return;
         }
 

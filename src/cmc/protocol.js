@@ -29,6 +29,17 @@ const MESSAGE_TYPES = Object.freeze({
     HBT: 'HBT',    // heartbeat
     STS: 'STS',    // status
     ENQ_REPLY: 'enq',
+    // The lower-case twins the CIS sends back. Every request above is paired
+    // with one of these, and the machine waits for it.
+    IND_REPLY: 'ind',
+    ACK_REPLY: 'ack',
+    INV_REPLY: 'inv',
+    LAB1_REPLY: 'lab1',
+    LAB2_REPLY: 'lab2',
+    LAB3_REPLY: 'lab3',
+    END_REPLY: 'end',
+    REM_REPLY: 'rem',
+    HBT_REPLY: 'hbt',
 });
 
 // MSG_RESULT of the `enq' reply: "0 = Error/Not found  1 = Good Item".
@@ -181,8 +192,74 @@ function buildEnqReply({
     return fields.join(SEPARATOR) + SEPARATOR;
 }
 
+/**
+ * The `ind', `ack', `end' and `rem' replies, which carry nothing of their own.
+ *
+ * All four are the same four fields: the machine id and the counter replicated
+ * from the request, and the reference that threads the whole box together. They
+ * share a builder because the document defines them identically and splitting
+ * them would be four copies of one line.
+ *
+ * @param {object} reply
+ * @param {string} reply.type  the lower-case reply name: ind, ack, end or rem
+ */
+function buildAcknowledgement({machineId = '', type = '', counter = '', reference = ''} = {}) {
+    return [machineId, type, counter, reference].join(SEPARATOR) + SEPARATOR;
+}
+
+/**
+ * The `lab1' / `lab2' / `lab3' reply, sent once the label is on its way to the
+ * labeller. Due within 1000 ms: without it the machine rejects the box when the
+ * label fails to appear under the tamper.
+ *
+ * `match' is the barcode printed on the label. A reader after the labeller
+ * compares what it reads against this string, so an empty one means the box
+ * cannot be verified. It may be declared here when it was not known at `enq'
+ * time (document, pg. 20).
+ *
+ * @param {object} reply
+ * @param {boolean} reply.delivered  whether the label reached the labeller
+ * @param {boolean} reply.reject     ask the machine to reject this box
+ */
+function buildLabelReply({
+    machineId = '',
+    type = '',
+    counter = '',
+    reference = '',
+    delivered = false,
+    match = '',
+    reject = false,
+    sorter = '',
+} = {}) {
+    const fields = [
+        machineId,
+        type,
+        counter,
+        reference,
+        delivered ? RESULT_GOOD : RESULT_NOT_FOUND,
+        match,
+        reject ? '1' : '0',
+        sorter,
+    ];
+
+    return fields.join(SEPARATOR) + SEPARATOR;
+}
+
+/**
+ * The `hbt' reply.
+ *
+ * Alone among the replies it carries no counter and ends without a separator:
+ * the document's example is "<stx>5555|hbt<etx>", and the machine's own HBT
+ * arrives the same way. Building it like the others would send the machine a
+ * frame it has no definition for.
+ */
+function buildHeartbeatReply({machineId = ''} = {}) {
+    return [machineId, MESSAGE_TYPES.HBT_REPLY].join(SEPARATOR);
+}
+
 module.exports = {
     STX, ETX, SEPARATOR, ENCODING, MESSAGE_TYPES, MAX_FRAME_BYTES,
     RESULT_GOOD, RESULT_NOT_FOUND,
     frame, createFrameReader, parseMessage, buildEnqReply,
+    buildAcknowledgement, buildLabelReply, buildHeartbeatReply,
 };

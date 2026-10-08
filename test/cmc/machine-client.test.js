@@ -15,9 +15,26 @@ const COUNTER = '7';
 
 const enq = (barcode) => `${MACHINE_ID}|ENQ|${COUNTER}|${barcode}|0|`;
 
-const reply = (barcode, found) => buildEnqReply({
-    machineId: MACHINE_ID, counter: COUNTER, barcode, found, printLabel1: found,
+// The reference the CIS assigns to the box. The document has it come from us,
+// and the machine replicates it through the rest of the cycle; a fresh client
+// hands out the first one, which is what these single-box tests see.
+const FIRST_REFERENCE = 'V00000001';
+
+const reply = (barcode, found, reference = FIRST_REFERENCE) => buildEnqReply({
+    machineId: MACHINE_ID,
+    counter: COUNTER,
+    reference,
+    barcode,
+    found,
+    printLabel1: found,
+    // MSG_MATCH_LAB1: the barcode printed on the label, which the reader after
+    // the labeller compares against. Empty for a box we do not hold.
+    matchLabel1: found ? barcode : '',
 });
+
+/** The LAB1 that asks for the label, which is when it is actually owed. */
+const lab1 = (reference = FIRST_REFERENCE) =>
+    `${MACHINE_ID}|LAB1|8|${reference}|1|0|2200|150|680|1000000`;
 
 const entry = (barcode) => ({
     barcode,
@@ -118,6 +135,14 @@ test('a known barcode is dispatched to its labeler and reported', async () => {
     try {
         await client.start();
         machine.send(enq('111'));
+        await new Promise((r) => setTimeout(r, 50));
+
+        // The label is owed on LAB1, when the box reaches the labeller, not on
+        // the ENQ. This test used to assert the delivery straight after the
+        // ENQ, which is early by a whole conveyor.
+        assert.equal(delivered.length, 0, 'nothing is delivered on the ENQ');
+
+        machine.send(lab1());
         await new Promise((r) => setTimeout(r, 100));
 
         assert.equal(delivered.length, 1);
@@ -143,14 +168,17 @@ test('a labeler failure is reported as an error without breaking the loop', asyn
     try {
         await client.start();
         machine.send(enq('111'));
+        await new Promise((r) => setTimeout(r, 50));
+        machine.send(lab1());
         await new Promise((r) => setTimeout(r, 100));
 
         assert.ok(ctx.results.some((r) => r.status === 'error' && r.phase === 'deliver'));
 
-        // The connection survives: a second ENQ still gets answered.
+        // The connection survives: a second ENQ still gets answered, with the
+        // next reference of the sequence.
         const pending = machine.next();
         machine.send(enq('111'));
-        assert.equal(await pending, reply('111', true));
+        assert.equal(await pending, reply('111', true, 'V00000002'));
     } finally {
         await client.stop();
         await machine.close();
@@ -181,11 +209,18 @@ test('deliveries to the same labeler are serialized, so two boxes cannot interle
 
     try {
         await client.start();
+        // Both boxes are answered first, then both labels are asked for: the
+        // delivery now hangs off LAB1, so that is where the overlap could
+        // happen.
         machine.send(enq('111'));
-        // Give the first delivery time to be picked up and start its 50ms
-        // wait, but not enough to finish it, before firing the second ENQ.
-        await new Promise((r) => setTimeout(r, 10));
         machine.send(enq('222'));
+        await new Promise((r) => setTimeout(r, 50));
+
+        machine.send(lab1('V00000001'));
+        // Give the first delivery time to be picked up and start its 50ms
+        // wait, but not enough to finish it, before asking for the second.
+        await new Promise((r) => setTimeout(r, 10));
+        machine.send(lab1('V00000002'));
         await new Promise((r) => setTimeout(r, 150));
 
         assert.equal(maxActive, 1, 'the two deliveries to the same labeler must never overlap');
@@ -210,12 +245,19 @@ test('an ACK is reported for traceability', async () => {
 
     try {
         await client.start();
-        machine.send(`${MACHINE_ID}|ACK|8|111|REJECTED_SIZE|`);
+        // The ACK's first field is MSG_REFERENCE, not the barcode: it carries
+        // back the reference the CIS assigned at ENQ time. Reading it as a
+        // barcode, as this used to, meant the report named something the
+        // machine never sent.
+        machine.send(enq('111'));
+        await new Promise((r) => setTimeout(r, 50));
+
+        machine.send(`${MACHINE_ID}|ACK|8|${FIRST_REFERENCE}|REJECTED_SIZE|`);
         await new Promise((r) => setTimeout(r, 50));
 
         const reported = ctx.results.find((r) => r.phase === 'ack');
         assert.equal(reported.barcode, '111');
-        assert.deepEqual(reported.detail.fields, ['111', 'REJECTED_SIZE']);
+        assert.deepEqual(reported.detail.fields, [FIRST_REFERENCE, 'REJECTED_SIZE']);
     } finally {
         await client.stop();
         await machine.close();
@@ -302,7 +344,8 @@ test('an onResult that throws synchronously does not break the ENQ loop', async 
         // that the error got logged.
         const second = machine.next();
         machine.send(enq('111'));
-        assert.equal(await second, reply('111', true));
+        // The second box of the session carries the next reference.
+        assert.equal(await second, reply('111', true, 'V00000002'));
     } finally {
         await client.stop();
         await machine.close();
@@ -342,7 +385,8 @@ test('an onResult that rejects asynchronously does not break the ENQ loop', asyn
         // ENQ, not merely that the rejection got logged.
         const second = machine.next();
         machine.send(enq('111'));
-        assert.equal(await second, reply('111', true));
+        // The second box of the session carries the next reference.
+        assert.equal(await second, reply('111', true, 'V00000002'));
 
         assert.equal(unhandled.length, 0, 'onResult rejection must not surface as an unhandled rejection');
     } finally {
