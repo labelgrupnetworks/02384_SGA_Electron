@@ -3,6 +3,14 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 
 const FILE_NAME = 'cmc-report-queue.json';
+// Results the backend refused. They never become sendable, so they leave the
+// queue, but they are not thrown away: the machine cycle they describe already
+// happened.
+const REJECTED_FILE_NAME = 'cmc-report-rejected.json';
+// The statuses that say the payload itself is the problem: no amount of
+// retrying makes these batches sendable. 422 is the one seen in the field —
+// Verentia refuses a result whose barcode is empty.
+const UNSENDABLE_STATUSES = new Set([400, 413, 422]);
 const DEFAULT_FLUSH_MS = 5000;
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_TIMEOUT_MS = 4500;
@@ -78,6 +86,57 @@ function createReportQueue({
         }
     };
 
+    /**
+     * Moves a refused batch out of the queue and onto disk.
+     *
+     * Set aside rather than dropped: the machine cycle already happened and a
+     * lost result cannot be recovered from anywhere else. Somebody has to look
+     * at these, so they are kept with the status and the reason the backend
+     * gave, and the failure is logged at error level rather than as a warning
+     * among the retries.
+     */
+    const setAside = async (batch, response) => {
+        let reason = '';
+        try {
+            reason = JSON.stringify(await response.json());
+        } catch {
+            reason = `HTTP ${response.status}`;
+        }
+
+        const rejectedPath = path.join(baseDir, REJECTED_FILE_NAME);
+        let rejected = [];
+
+        try {
+            rejected = JSON.parse(fs.readFileSync(rejectedPath, 'utf8'));
+            if (!Array.isArray(rejected)) rejected = [];
+        } catch {
+            rejected = [];
+        }
+
+        const at = new Date().toISOString();
+        for (const result of batch) {
+            rejected.push({ at, status: response.status, reason, result });
+        }
+
+        try {
+            fs.mkdirSync(baseDir, { recursive: true });
+            fs.writeFileSync(rejectedPath, `${JSON.stringify(rejected, null, 2)}\n`, 'utf8');
+        } catch (error) {
+            logger.error(`❌ [cmc] could not set aside the refused batch: ${error.message}`);
+
+            return;
+        }
+
+        const refused = new Set(batch.map((item) => item.id));
+        pending = pending.filter((item) => !refused.has(item.id));
+        persist();
+
+        logger.error(
+            `❌ [cmc] Verentia refused ${batch.length} result(s) with ${response.status}; `
+            + `set aside in ${REJECTED_FILE_NAME}: ${reason}`,
+        );
+    };
+
     const queue = {
         push(result) {
             pending.push({ ...result, id: crypto.randomUUID() });
@@ -101,11 +160,34 @@ function createReportQueue({
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
+                        // Without this Laravel answers a validation error with a
+                        // redirect to the site root; fetch follows it, lands on
+                        // https, and a self-signed certificate turns a readable
+                        // 422 into "fetch failed". The reason never reaches the
+                        // log, which is exactly how one went unnoticed.
+                        Accept: 'application/json',
                         'X-CMC-Station-Token': stationToken,
                     },
                     body: JSON.stringify({ results: batch }),
                     signal: AbortSignal.timeout(timeoutMs),
                 });
+
+                // A refusal of the CONTENT is not a failed delivery: the backend
+                // received the batch and will not accept it however many times
+                // it is sent. Retrying holds the head of the queue forever, and
+                // since a batch is validated as a whole, one malformed result
+                // drags every valid one travelling with it. The station then
+                // goes quiet with nothing but a warning every few minutes.
+                //
+                // Deliberately not every 4xx. A 401 or a 404 is the environment
+                // being wrong - a stale token, the wrong endpoint - and the
+                // same payload goes through untouched once that is fixed, so
+                // those keep retrying.
+                if (!response.ok && UNSENDABLE_STATUSES.has(response.status)) {
+                    await setAside(batch, response);
+
+                    return;
+                }
 
                 if (!response.ok) {
                     logger.warn(`⚠️ [cmc] Verentia responded ${response.status} to report; will retry`);
