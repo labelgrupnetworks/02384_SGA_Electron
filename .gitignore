@@ -6,3 +6,6 @@ out/
 
 .codegraph/
 .idea/
+
+# Labels the stand-in labeller received while testing the LAB1 cycle.
+labels-received/
