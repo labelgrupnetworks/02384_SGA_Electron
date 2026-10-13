@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('get-version'),
   getInterfaceChoice: () => ipcRenderer.invoke('get-interface-choice'),
   chooseInterface: (name) => ipcRenderer.invoke('choose-interface', name),
+  getCmcConfig: () => ipcRenderer.invoke('get-cmc-config'),
+  saveCmcConfig: (config) => ipcRenderer.invoke('save-cmc-config', config),
+  probeCmcTarget: (target) => ipcRenderer.invoke('probe-cmc-target', target),
 });
 
 window.addEventListener('DOMContentLoaded', () => {

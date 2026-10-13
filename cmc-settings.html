@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <title>Configuración CMC</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0; padding: 24px; background: #f7f7f9; color: #25273d;
+        }
+        h1 { font-size: 17px; margin: 0 0 4px; }
+        .lead { font-size: 13px; line-height: 1.5; color: #6b6c7e; margin: 0 0 18px; }
+        fieldset {
+            border: 1px solid #d8d9e0; border-radius: 10px; background: #fff;
+            padding: 14px 16px 16px; margin: 0 0 14px;
+        }
+        legend { font-size: 13px; font-weight: 600; padding: 0 6px; }
+        .hint { font-size: 12px; color: #6b6c7e; margin: 0 0 10px; line-height: 1.45; }
+        .row { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 8px; }
+        .row > div { flex: 1; }
+        .row > div.port { flex: 0 0 110px; }
+        .row > div.probe { flex: 0 0 auto; }
+        label { display: block; font-size: 12px; color: #6b6c7e; margin-bottom: 3px; }
+        input[type="text"], input[type="password"], input[type="number"] {
+            width: 100%; box-sizing: border-box; font-size: 14px; color: #25273d;
+            border: 1px solid #d8d9e0; border-radius: 8px; padding: 8px 10px; background: #fff;
+        }
+        input:focus { outline: none; border-color: #86ba3b; }
+        button {
+            cursor: pointer; font-size: 14px; border-radius: 8px;
+            border: 1px solid #d8d9e0; background: #fff; color: #25273d; padding: 8px 14px;
+        }
+        button:hover:not(:disabled) { border-color: #86ba3b; background: #f5f9ef; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        button.primary { background: #86ba3b; border-color: #86ba3b; color: #fff; font-weight: 600; }
+        /* #86ba3b on white is only 2.4:1, too faint to read; this clears 5:1. */
+        button.primary:hover:not(:disabled) { background: #74a332; border-color: #74a332; }
+        .probe-result { font-size: 12px; margin-top: 4px; min-height: 16px; }
+        .ok { color: #577926; font-weight: 600; }
+        .bad { color: #b3261e; font-weight: 600; }
+        .switch { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 10px; }
+        .notice {
+            font-size: 13px; border-radius: 8px; padding: 10px 12px; margin: 0 0 14px;
+            display: none; line-height: 1.45;
+        }
+        .notice.warn { background: #fff4e5; border: 1px solid #ffd7a0; color: #8a5300; }
+        .notice.good { background: #f0f7e6; border: 1px solid #c3e08a; color: #3f5c16; }
+        .notice.error { background: #fdeceb; border: 1px solid #f5c2bf; color: #8c1d18; }
+        .actions { display: flex; gap: 10px; justify-content: flex-end; }
+    </style>
+</head>
+<body>
+    <h1>Configuraci&oacute;n de la CMC</h1>
+    <p class="lead">
+        Este puesto hace de CIS entre la m&aacute;quina CMC y Verentia. Las direcciones son
+        distintas: el protocolo va contra la m&aacute;quina, la etiqueta va directa a la
+        etiquetadora, y los resultados a Verentia.
+    </p>
+
+    <div id="notice" class="notice"></div>
+
+    <div class="switch">
+        <input type="checkbox" id="enabled" />
+        <label for="enabled" style="margin:0; font-size:14px; color:#25273d;">
+            Activar la integraci&oacute;n CMC en este puesto
+        </label>
+    </div>
+
+    <fieldset>
+        <legend>M&aacute;quina CMC</legend>
+        <p class="hint">
+            Por aqu&iacute; viaja el protocolo. La m&aacute;quina es el servidor y este puesto se conecta a ella.
+        </p>
+        <div class="row">
+            <div><label for="machineHost">IP</label>
+                <input type="text" id="machineHost" placeholder="172.18.224.1" /></div>
+            <div class="port"><label for="machinePort">Puerto</label>
+                <input type="number" id="machinePort" placeholder="12001" /></div>
+            <div class="probe"><button type="button" data-probe="machine">Probar</button></div>
+        </div>
+        <div class="probe-result" id="probe-machine"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Etiquetadoras</legend>
+        <p class="hint">
+            A donde se env&iacute;a el ZPL. El orden importa: la primera recibe el LAB1, la
+            segunda el LAB2 y la tercera el LAB3. Deja en blanco las que no existan.
+        </p>
+        <div id="labelers"></div>
+    </fieldset>
+
+    <fieldset>
+        <legend>Verentia</legend>
+        <p class="hint">
+            A donde se reportan los resultados. El token es el de ESE entorno, no el de otro.
+        </p>
+        <div class="row">
+            <div><label for="endpoint">URL de resultados</label>
+                <input type="text" id="endpoint"
+                       placeholder="https://verentia.ejemplo.com/api/v1/cmc/results" /></div>
+        </div>
+        <div class="row">
+            <div><label for="token">Token de estaci&oacute;n</label>
+                <input type="password" id="token" placeholder="" autocomplete="off" /></div>
+        </div>
+        <div class="probe-result" id="token-state"></div>
+    </fieldset>
+
+    <div class="actions">
+        <button type="button" id="cancel">Cancelar</button>
+        <button type="button" id="save" class="primary">Guardar</button>
+    </div>
+
+    <script>
+        const api = window.electronAPI;
+        const notice = document.getElementById('notice');
+        const labelersBox = document.getElementById('labelers');
+
+        // Three, because the protocol defines LAB1, LAB2 and LAB3 and no more.
+        const LABELER_SLOTS = 3;
+
+        function show(kind, text) {
+            notice.className = 'notice ' + kind;
+            notice.textContent = text;
+            notice.style.display = 'block';
+        }
+
+        function buildLabelerRows(saved) {
+            for (let index = 0; index < LABELER_SLOTS; index++) {
+                const labeler = saved[index] ?? {};
+                const row = document.createElement('div');
+
+                row.innerHTML = `
+                    <div class="row">
+                        <div>
+                            <label for="labelerHost${index}">Etiquetadora ${index + 1} &mdash; IP</label>
+                            <input type="text" id="labelerHost${index}" />
+                        </div>
+                        <div class="port">
+                            <label for="labelerPort${index}">Puerto</label>
+                            <input type="number" id="labelerPort${index}" placeholder="9100" />
+                        </div>
+                        <div class="probe">
+                            <button type="button" data-probe="labeler${index}">Probar</button>
+                        </div>
+                    </div>
+                    <div class="probe-result" id="probe-labeler${index}"></div>
+                `;
+
+                labelersBox.appendChild(row);
+                document.getElementById('labelerHost' + index).value = labeler.host ?? '';
+                document.getElementById('labelerPort' + index).value = labeler.port ?? '';
+            }
+        }
+
+        function targetFor(which) {
+            if (which === 'machine') {
+                return {
+                    host: document.getElementById('machineHost').value,
+                    port: Number(document.getElementById('machinePort').value),
+                };
+            }
+
+            const index = which.replace('labeler', '');
+
+            return {
+                host: document.getElementById('labelerHost' + index).value,
+                port: Number(document.getElementById('labelerPort' + index).value),
+            };
+        }
+
+        // A bare connect, so this is safe to point at a machine in production:
+        // it writes nothing and asks nothing of it.
+        async function probe(which, button) {
+            const result = document.getElementById('probe-' + which);
+
+            button.disabled = true;
+            result.className = 'probe-result';
+            result.textContent = 'probando…';
+
+            try {
+                const outcome = await api.probeCmcTarget(targetFor(which));
+
+                if (outcome.reachable) {
+                    result.className = 'probe-result ok';
+                    result.textContent = '✓ responde';
+                } else {
+                    result.className = 'probe-result bad';
+                    result.textContent = outcome.reason === 'invalid'
+                        ? '✗ falta la IP o el puerto'
+                        : '✗ no responde (' + outcome.reason + ')';
+                }
+            } catch (error) {
+                result.className = 'probe-result bad';
+                result.textContent = '✗ no se pudo comprobar';
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        document.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-probe]');
+            if (button) probe(button.dataset.probe, button);
+        });
+
+        document.getElementById('cancel').addEventListener('click', () => window.close());
+
+        document.getElementById('save').addEventListener('click', async () => {
+            const save = document.getElementById('save');
+            save.disabled = true;
+
+            const labelers = [];
+            for (let index = 0; index < LABELER_SLOTS; index++) {
+                labelers.push({
+                    host: document.getElementById('labelerHost' + index).value,
+                    port: Number(document.getElementById('labelerPort' + index).value),
+                });
+            }
+
+            try {
+                const outcome = await api.saveCmcConfig({
+                    enabled: document.getElementById('enabled').checked,
+                    machine: targetFor('machine'),
+                    labelers,
+                    verentia: {
+                        endpoint: document.getElementById('endpoint').value,
+                        token: document.getElementById('token').value,
+                    },
+                });
+
+                if (outcome.saved) {
+                    show('good', 'Guardado. Hay que reiniciar la aplicación para que se aplique: '
+                        + 'la configuración se lee al arrancar.');
+                } else if (outcome.reason === 'invalid_machine') {
+                    show('error', 'Falta la IP o el puerto de la máquina, o el puerto no es válido.');
+                } else {
+                    show('error', 'No se pudo guardar la configuración en el disco.');
+                }
+            } catch (error) {
+                show('error', 'No se pudo guardar la configuración.');
+            } finally {
+                save.disabled = false;
+            }
+        });
+
+        (async () => {
+            try {
+                const config = await api.getCmcConfig();
+
+                document.getElementById('enabled').checked = config.enabled;
+                document.getElementById('machineHost').value = config.machine.host;
+                document.getElementById('machinePort').value = config.machine.port;
+                document.getElementById('endpoint').value = config.verentia.endpoint;
+
+                buildLabelerRows(config.labelers);
+
+                // The token is never sent to this window: an operator changing a
+                // port has no business reading the credential, and this dialog
+                // ends up in screenshots. Only whether one is stored.
+                const state = document.getElementById('token-state');
+                if (config.verentia.hasToken) {
+                    state.className = 'probe-result ok';
+                    state.textContent = '✓ hay un token guardado. Déjalo en blanco para conservarlo.';
+                } else {
+                    state.className = 'probe-result bad';
+                    state.textContent = '✗ no hay token guardado: Verentia rechazará los reportes.';
+                }
+            } catch (error) {
+                show('error', 'No se pudo leer la configuración actual.');
+                buildLabelerRows([]);
+            }
+        })();
+    </script>
+</body>
+</html>

@@ -1,6 +1,10 @@
 const { app, Tray, Menu, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
 const os = require("os");
+// For the connection probe in the CMC settings dialog: opening a socket and
+// closing it is the only way to tell an operator whether the address they just
+// typed leads anywhere.
+const net = require("net");
 const express = require("express");
 const cors = require("cors");
 const http = require("http");
@@ -232,6 +236,7 @@ function describeLocalIp() {
 }
 
 let interfaceWindow = null;
+let cmcSettingsWindow = null;
 
 ipcMain.handle("get-interface-choice", () => {
     const current = localIp();
@@ -248,6 +253,122 @@ ipcMain.handle("get-interface-choice", () => {
         savedInterface: current.savedInterface || null,
         currentInterface: current.interface || null,
     };
+});
+
+/**
+ * The CMC settings, for the configuration dialog.
+ *
+ * The station token never leaves the main process in the clear: the dialog is
+ * told whether one is stored, not what it is. An operator opening the window to
+ * change a port has no business reading the credential, and a screenshot of
+ * this dialog ends up in chats and tickets.
+ */
+ipcMain.handle("get-cmc-config", () => {
+    const cmc = getConfigStore().read().cmc ?? {};
+
+    return {
+        enabled: Boolean(cmc.enabled),
+        machine: {
+            host: cmc.machine?.host ?? "",
+            port: cmc.machine?.port ?? "",
+        },
+        labelers: Array.isArray(cmc.labelers) ? cmc.labelers : [],
+        verentia: {
+            endpoint: cmc.verentia?.endpoint ?? "",
+            hasToken: Boolean(cmc.verentia?.station_token),
+        },
+    };
+});
+
+/**
+ * Saves what the dialog sent, and reports that a restart is needed.
+ *
+ * The CMC block is read once at boot: the machine client, the manifest cache
+ * and the report queue are all built from it there. Applying it live would mean
+ * tearing those down mid-cycle, with a box possibly in flight, so this writes
+ * and says so rather than pretending it took effect.
+ *
+ * An empty token leaves the stored one alone. The dialog never receives it, so
+ * it cannot send it back, and treating "empty" as "clear it" would wipe the
+ * credential every time somebody corrected a port.
+ */
+ipcMain.handle("save-cmc-config", (event, config) => {
+    const store = getConfigStore();
+    const current = store.read().cmc ?? {};
+
+    const port = Number(config?.machine?.port);
+    const host = String(config?.machine?.host ?? "").trim();
+
+    if (host === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return { saved: false, reason: "invalid_machine" };
+    }
+
+    const labelers = (Array.isArray(config?.labelers) ? config.labelers : [])
+        .map((labeler) => ({
+            host: String(labeler?.host ?? "").trim(),
+            port: Number(labeler?.port),
+        }))
+        // A labeller with half its address is worse than none: it would fail on
+        // every box instead of saying plainly that it was never configured.
+        .filter((labeler) => labeler.host !== "" && Number.isInteger(labeler.port));
+
+    const token = String(config?.verentia?.token ?? "");
+
+    const next = {
+        enabled: Boolean(config?.enabled),
+        machine: { host, port },
+        labelers,
+        verentia: {
+            endpoint: String(config?.verentia?.endpoint ?? "").trim(),
+            station_token: token === "" ? (current.verentia?.station_token ?? "") : token,
+        },
+    };
+
+    try {
+        store.set("cmc", next);
+    } catch (error) {
+        logger.error(`❌ No se pudo guardar la configuración CMC: ${error.message}`);
+
+        return { saved: false, reason: "write_failed" };
+    }
+
+    logger.info("✅ Configuración CMC guardada; se aplica al reiniciar");
+
+    return { saved: true, restartRequired: true };
+});
+
+/**
+ * Opens a socket to a host and port and closes it.
+ *
+ * Answers the only question that matters before leaving the station: is there
+ * anything there. It writes nothing, so it is safe to point at a machine that
+ * is in production - a bare connect tells it nothing and asks nothing of it.
+ */
+ipcMain.handle("probe-cmc-target", (event, target) => {
+    const host = String(target?.host ?? "").trim();
+    const port = Number(target?.port);
+
+    if (host === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return Promise.resolve({ reachable: false, reason: "invalid" });
+    }
+
+    return new Promise((resolve) => {
+        const socket = new net.Socket();
+        let settled = false;
+
+        const finish = (result) => {
+            if (settled) return;
+            settled = true;
+            socket.removeAllListeners();
+            socket.destroy();
+            resolve(result);
+        };
+
+        socket.setTimeout(4000);
+        socket.once("timeout", () => finish({ reachable: false, reason: "timeout" }));
+        socket.once("error", (error) => finish({ reachable: false, reason: error.code ?? "error" }));
+        socket.connect(port, host, () => finish({ reachable: true }));
+    });
 });
 
 ipcMain.handle("choose-interface", (event, name) => {
@@ -301,6 +422,40 @@ ipcMain.handle("choose-interface", (event, name) => {
 
     return { saved: true };
 });
+
+/**
+ * The CMC settings dialog.
+ *
+ * Taller than the interface picker because it carries three addresses and a
+ * credential; scrollable because a screen set to 125% scaling at 768px high
+ * would otherwise cut off the buttons.
+ */
+function openCmcSettingsWindow() {
+    if (cmcSettingsWindow) {
+        cmcSettingsWindow.focus();
+
+        return;
+    }
+
+    cmcSettingsWindow = new BrowserWindow({
+        width: 560,
+        height: 720,
+        resizable: true,
+        center: true,
+        title: "Configuración CMC",
+        webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            preload: path.join(__dirname, "preload.js"),
+        },
+    });
+
+    cmcSettingsWindow.setMenuBarVisibility(false);
+    cmcSettingsWindow.loadFile("cmc-settings.html");
+    cmcSettingsWindow.on("closed", () => {
+        cmcSettingsWindow = null;
+    });
+}
 
 function openInterfaceWindow() {
     if (interfaceWindow) {
@@ -462,6 +617,15 @@ function buildTrayMenu() {
             label: "🌐 Cambiar interfaz de red",
             click: () => {
                 openInterfaceWindow();
+            },
+        },
+        {
+            // Here rather than in a file on disk: a station is configured by
+            // whoever installs it, often without remote access to the machine,
+            // and hand-editing JSON on site is where the typos come from.
+            label: "⚙️ Configurar CMC",
+            click: () => {
+                openCmcSettingsWindow();
             },
         },
         {
