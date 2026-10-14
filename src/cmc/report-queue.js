@@ -37,6 +37,13 @@ function createReportQueue({
     stationToken,
     logger,
     fetchImpl = globalThis.fetch,
+    // Injected for the same reason as fetchImpl: the backoff schedule is the
+    // one behaviour here that cannot be asserted without controlling time.
+    // Measuring it against the wall clock meant a 15 ms base delay competing
+    // with the scheduler on a loaded machine, which failed roughly one run in
+    // five - the worst kind of test, since the honest reading of a flake is to
+    // stop believing the suite.
+    setTimeoutImpl = setTimeout,
     flushMs = DEFAULT_FLUSH_MS,
     batchSize = DEFAULT_BATCH_SIZE,
     timeoutMs = DEFAULT_TIMEOUT_MS,
@@ -226,11 +233,11 @@ function createReportQueue({
         start() {
             if (timer) return;
             const scheduleNext = () => {
-                timer = setTimeout(async () => {
+                timer = setTimeoutImpl(async () => {
                     await queue.flush().catch(() => {});
                     scheduleNext();
                 }, currentDelayMs);
-                if (typeof timer.unref === 'function') timer.unref();
+                if (timer && typeof timer.unref === 'function') timer.unref();
             };
             scheduleNext();
         },

@@ -220,37 +220,56 @@ test('flushing guard prevents concurrent flush calls', async () => {
     assert.equal(queue.size(), 0);
 });
 
+/**
+ * Drives the queue's scheduling by hand.
+ *
+ * Collects the delay asked for on each call and runs the callback immediately,
+ * so the backoff sequence can be asserted exactly instead of inferred from
+ * elapsed time. The previous version measured the wall clock with a 15 ms base
+ * delay and failed about one run in five on a busy machine - a flaky test in a
+ * suite that decides whether boxes leave the line labelled is worse than no
+ * test, because the reasonable response to a flake is to stop trusting it.
+ */
+function manualScheduler() {
+    const delays = [];
+    let depth = 0;
+
+    const setTimeoutImpl = (callback, delay) => {
+        delays.push(delay);
+
+        // Bounded: the queue reschedules itself from inside its own callback,
+        // so running them unconditionally would recurse forever.
+        if (depth < 6) {
+            depth += 1;
+            queueMicrotask(() => { callback(); });
+        }
+
+        return { unref() {} };
+    };
+
+    return { delays, setTimeoutImpl };
+}
+
 test('start() backs off exponentially on repeated failures, capped at maxBackoffMs', async () => {
-    const timestamps = [];
+    const { delays, setTimeoutImpl } = manualScheduler();
     const queue = createReportQueue({
         baseDir: tempDir(), endpoint: 'https://x/api', stationToken: 't', logger: silentLogger,
         flushMs: 15,
         maxBackoffMs: 60,
-        fetchImpl: async () => {
-            timestamps.push(Date.now());
-            return { ok: false, status: 500 };
-        },
+        setTimeoutImpl,
+        fetchImpl: async () => ({ ok: false, status: 500 }),
     });
 
     queue.push(result('111'));
     queue.start();
-    // Enough real time for several attempts: 15, 30, 60, 60, 60... capped.
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    // Lets the chained microtasks settle; no wall-clock delay is involved.
+    for (let i = 0; i < 20; i += 1) {
+        await Promise.resolve();
+    }
     queue.stop();
 
-    assert.ok(timestamps.length >= 4, `expected several retries, got ${timestamps.length}`);
-    const gaps = [];
-    for (let i = 1; i < timestamps.length; i += 1) {
-        gaps.push(timestamps[i] - timestamps[i - 1]);
-    }
-
-    // The first retry follows close to flushMs...
-    assert.ok(gaps[0] < 45, `first gap should be near flushMs (15ms), got ${gaps[0]}`);
-    // ...later gaps grow well past it as failures keep piling up...
-    const lastGap = gaps[gaps.length - 1];
-    assert.ok(lastGap > gaps[0], `backoff should have grown, first=${gaps[0]} last=${lastGap}`);
-    // ...but never past the cap (with generous slack for scheduler jitter).
-    assert.ok(lastGap <= 120, `backoff must be capped near maxBackoffMs (60ms), got ${lastGap}`);
+    // 15 -> 30 -> 60 -> capped at 60 thereafter.
+    assert.deepEqual(delays.slice(0, 5), [15, 30, 60, 60, 60]);
 });
 
 test('a successful flush resets the backoff delay back to flushMs', async () => {
