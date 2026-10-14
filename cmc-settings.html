@@ -47,6 +47,26 @@
         .notice.good { background: #f0f7e6; border: 1px solid #c3e08a; color: #3f5c16; }
         .notice.error { background: #fdeceb; border: 1px solid #f5c2bf; color: #8c1d18; }
         .actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+        /* Status panel */
+        #status { margin: 0 0 16px; }
+        .line {
+            display: flex; align-items: baseline; gap: 10px;
+            padding: 7px 0; border-bottom: 1px solid #ecedf2; font-size: 13px;
+        }
+        .line:last-child { border-bottom: none; }
+        .line .what { flex: 0 0 104px; color: #6b6c7e; }
+        .line .how { flex: 1; }
+        .dot {
+            flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%;
+            background: #c9cad3; display: inline-block;
+        }
+        .dot.up { background: #6a9a2b; }
+        .dot.down { background: #b3261e; }
+        .dot.idle { background: #d9a441; }
+        .detail { color: #6b6c7e; font-size: 12px; display: block; margin-top: 1px; }
+        .detail.bad { color: #b3261e; }
+        .stamp { font-variant-numeric: tabular-nums; }
     </style>
 </head>
 <body>
@@ -58,6 +78,13 @@
     </p>
 
     <div id="notice" class="notice"></div>
+
+    <fieldset id="status">
+        <legend>Estado</legend>
+        <div id="status-body">
+            <p class="hint" style="margin:0">leyendo…</p>
+        </div>
+    </fieldset>
 
     <div class="switch">
         <input type="checkbox" id="enabled" />
@@ -243,6 +270,106 @@
                 save.disabled = false;
             }
         });
+
+        // ---- status panel -------------------------------------------------
+        const statusBody = document.getElementById('status-body');
+
+        function ago(iso) {
+            if (!iso) return null;
+            const seconds = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+            if (seconds < 60) return `hace ${seconds} s`;
+            if (seconds < 3600) return `hace ${Math.round(seconds / 60)} min`;
+
+            return `hace ${Math.round(seconds / 3600)} h`;
+        }
+
+        function line(what, dot, how, detail, detailBad) {
+            const extra = detail
+                ? `<span class="detail${detailBad ? ' bad' : ''}">${detail}</span>`
+                : '';
+
+            return `<div class="line">
+                <span class="dot ${dot}"></span>
+                <span class="what">${what}</span>
+                <span class="how">${how}${extra}</span>
+            </div>`;
+        }
+
+        function renderStatus(state) {
+            if (!state.enabled) {
+                statusBody.innerHTML = line('CMC', 'idle', 'desactivado en este puesto',
+                    'Marca la casilla de abajo y guarda para activarlo.');
+
+                return;
+            }
+
+            const m = state.machine;
+            const b = state.manifest;
+            const v = state.verentia;
+            const label = m.last_label;
+
+            const rows = [
+                m.savedAddress
+                    ? line(
+                        'Máquina',
+                        'idle',
+                        `guardada ${m.savedAddress} · sin aplicar`,
+                        `Reinicia la aplicación. Sigue usando ${m.address}.`,
+                    )
+                    : line(
+                        'Máquina',
+                        m.connected ? 'up' : 'down',
+                        m.connected ? `conectada · ${m.address}` : `sin conexión · ${m.address}`,
+                        m.connected
+                            ? (m.last_enq_at ? `última caja ${ago(m.last_enq_at)}` : 'aún no ha entrado ninguna caja')
+                            : (m.last_error ?? null),
+                        !m.connected,
+                    ),
+                line(
+                    'Lote',
+                    b && b.total > 0 ? 'up' : 'idle',
+                    b && b.total > 0
+                        ? `${b.pending} pendientes de ${b.total}`
+                        : 'sin lote cargado',
+                    b && b.loaded_at ? `cargado ${ago(b.loaded_at)}` : null,
+                ),
+                line(
+                    'Etiqueta',
+                    label ? (label.ok ? 'up' : 'down') : 'idle',
+                    label
+                        ? (label.ok ? `enviada a ${label.target}` : 'falló el envío')
+                        : 'ninguna enviada todavía',
+                    label
+                        ? (label.ok
+                            ? `${label.barcode} · ${ago(label.at)}`
+                            : `${label.error} · ${ago(label.at)}`)
+                        : null,
+                    Boolean(label && !label.ok),
+                ),
+                line(
+                    'Verentia',
+                    v.lastError ? 'down' : (v.pending > 0 ? 'idle' : 'up'),
+                    v.pending > 0 ? `${v.pending} informes en cola` : 'sin cola',
+                    v.lastError ?? (v.lastSentAt ? `último envío ${ago(v.lastSentAt)}` : 'nada enviado aún'),
+                    Boolean(v.lastError),
+                ),
+            ];
+
+            statusBody.innerHTML = rows.join('');
+        }
+
+        async function refreshStatus() {
+            try {
+                renderStatus(await api.getCmcStatus());
+            } catch (error) {
+                statusBody.innerHTML = line('Estado', 'down', 'no se pudo leer', error.message, true);
+            }
+        }
+
+        refreshStatus();
+        // Two seconds: fast enough to watch a box go through, and it costs
+        // nothing - the state is read from memory, not from the machine.
+        setInterval(refreshStatus, 2000);
 
         (async () => {
             try {

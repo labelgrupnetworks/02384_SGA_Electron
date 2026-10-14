@@ -344,6 +344,44 @@ ipcMain.handle("save-cmc-config", (event, config) => {
  * anything there. It writes nothing, so it is safe to point at a machine that
  * is in production - a bare connect tells it nothing and asks nothing of it.
  */
+/**
+ * What the status panel polls.
+ *
+ * Composed from the running objects rather than fetched from /cmc/status: the
+ * panel must still work when the HTTP server is the thing that is broken, and
+ * this way it cannot drift from what the driver actually holds.
+ */
+ipcMain.handle("get-cmc-status", () => {
+    const cmc = getConfigStore().read().cmc ?? {};
+
+    if (!cmc.enabled) {
+        return { enabled: false };
+    }
+
+    const saved = `${cmc.machine?.host ?? "?"}:${cmc.machine?.port ?? "?"}`;
+    const machine = cmcMachine
+        ? cmcMachine.state()
+        : { address: saved, ...CMC_DISABLED_STATE };
+
+    return {
+        enabled: true,
+        machine: {
+            ...machine,
+            // Saved but not yet in use. Without saying so, the panel shows a
+            // healthy-looking address beside the previous one's error and the
+            // operator concludes the new machine is down.
+            savedAddress: machine.address === saved ? null : saved,
+        },
+        manifest: cmcCache ? cmcCache.state() : null,
+        verentia: {
+            endpoint: cmc.verentia?.endpoint ?? "",
+            ...(cmcReportQueue
+                ? cmcReportQueue.state()
+                : { pending: 0, lastError: null, lastSentAt: null }),
+        },
+    };
+});
+
 ipcMain.handle("probe-cmc-target", (event, target) => {
     const host = String(target?.host ?? "").trim();
     const port = Number(target?.port);
@@ -714,6 +752,14 @@ app.whenReady().then(() => {
     } else {
         logger.info(`🌐 IP local: ${describeLocalIp()}`);
     }
+
+    // Always, filled in from whatever is stored. Asking only when the block is
+    // missing would mean a station installed by copying another station's
+    // settings.json never shows anyone which machine it is pointing at - and
+    // getting the addresses in front of whoever is standing there is the whole
+    // point. The tray entry opens the same window later.
+    logger.info("⚙️ Se abre el diálogo de configuración de la CMC");
+    openCmcSettingsWindow();
 
     // Configurar el auto-actualizador (forzar también en desarrollo para testing)
     setupAutoUpdater();

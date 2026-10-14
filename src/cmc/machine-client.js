@@ -132,11 +132,26 @@ function createMachineClient({
 
     // Runs after the reply is already on the wire. Errors here are recorded
     // against the unit, never propagated into the ENQ path.
+    /**
+     * The last label this station tried to print.
+     *
+     * There is no standing connection to a labeller, so its health cannot be
+     * read the way the machine's can - the only honest signal is what happened
+     * the last time one was actually used. It is also the signal that matters:
+     * a labeller unplugged since the morning looks exactly like a quiet shift
+     * until a box reaches it.
+     */
+    let lastLabel = null;
+    const noteLabel = (barcode, target, ok, error) => {
+        lastLabel = { at: nowIso(), barcode, target, ok, error };
+    };
+
     const deliverLabels = async (entry) => {
         for (const [index, payload] of entry.label_payloads.entries()) {
             const labeler = labelers[index];
 
             if (!labeler) {
+                noteLabel(entry.barcode, `LAB${index + 1}`, false, 'no hay etiquetadora configurada');
                 report({
                     barcode: entry.barcode, phase: 'deliver', status: 'error',
                     detail: { reason: 'no_labeler_configured', index },
@@ -144,13 +159,17 @@ function createMachineClient({
                 continue;
             }
 
+            const target = `${labeler.host}:${labeler.port}`;
+
             try {
                 await withLabelerLock(labeler.host, labeler.port, () => deliver({
                     host: labeler.host,
                     port: labeler.port,
                     content: Buffer.from(payload.content_base64, 'base64').toString(ENCODING),
                 }));
+                noteLabel(entry.barcode, target, true, null);
             } catch (error) {
+                noteLabel(entry.barcode, target, false, error.message);
                 report({
                     barcode: entry.barcode, phase: 'deliver', status: 'error',
                     detail: { reason: error.code ?? 'peripheral', message: error.message, index },
@@ -464,8 +483,22 @@ function createMachineClient({
         },
 
         state() {
-            return { connected, last_error: lastError, last_enq_at: lastEnqAt };
+            return {
+                // The address IN USE, which is not necessarily the one on disk:
+                // settings are read at boot, so a freshly saved address only
+                // takes effect on restart. Reporting the saved one here put a
+                // new address next to the old one's timeout.
+                address: `${host}:${port}`,
+                connected,
+                last_error: lastError,
+                last_enq_at: lastEnqAt,
+                last_label: lastLabel,
+            };
         },
+
+        // Exposed for the status panel's tests, which exercise label delivery
+        // without a machine socket.
+        deliverLabels,
     };
 }
 

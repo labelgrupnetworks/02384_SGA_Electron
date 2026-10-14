@@ -137,6 +137,12 @@ function createReportQueue({
         );
     };
 
+    // What the status panel shows. The log already carries all of this, but a
+    // log scrolls: a station whose reports stopped reaching Verentia looks
+    // exactly like one with nothing to report unless the last failure is kept.
+    let lastError = null;
+    let lastSentAt = null;
+
     const queue = {
         push(result) {
             pending.push({ ...result, id: crypto.randomUUID() });
@@ -145,6 +151,10 @@ function createReportQueue({
 
         size() {
             return pending.length;
+        },
+
+        state() {
+            return { pending: pending.length, lastError, lastSentAt };
         },
 
         async flush() {
@@ -184,12 +194,14 @@ function createReportQueue({
                 // same payload goes through untouched once that is fixed, so
                 // those keep retrying.
                 if (!response.ok && UNSENDABLE_STATUSES.has(response.status)) {
+                    lastError = `Verentia rechazó ${batch.length} resultado(s) con ${response.status}`;
                     await setAside(batch, response);
 
                     return;
                 }
 
                 if (!response.ok) {
+                    lastError = `Verentia respondió ${response.status}; se reintentará`;
                     logger.warn(`⚠️ [cmc] Verentia responded ${response.status} to report; will retry`);
                     currentDelayMs = Math.min(currentDelayMs * 2, maxBackoffMs);
                     return;
@@ -199,8 +211,11 @@ function createReportQueue({
                 pending = pending.filter((item) => !sent.has(item.id));
                 persist();
                 logger.info(`📤 [cmc] ${batch.length} results reported`);
+                lastError = null;
+                lastSentAt = new Date().toISOString();
                 currentDelayMs = flushMs;
             } catch (error) {
+                lastError = error.message;
                 logger.warn(`⚠️ [cmc] failed to report, will retry: ${error.message}`);
                 currentDelayMs = Math.min(currentDelayMs * 2, maxBackoffMs);
             } finally {
