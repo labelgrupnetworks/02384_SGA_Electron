@@ -67,6 +67,23 @@
         .detail { color: #6b6c7e; font-size: 12px; display: block; margin-top: 1px; }
         .detail.bad { color: #b3261e; }
         .stamp { font-variant-numeric: tabular-nums; }
+
+        /* Protocol message log */
+        #messages { margin: 0 0 14px; }
+        .msg {
+            display: flex; gap: 8px; align-items: baseline;
+            font-family: ui-monospace, Consolas, "Courier New", monospace;
+            font-size: 12px; padding: 2px 0; white-space: nowrap;
+        }
+        .msg .t { color: #9a9bab; flex: 0 0 60px; }
+        .msg .d { flex: 0 0 14px; font-weight: 700; }
+        .msg .d.in { color: #2f6ea8; }
+        .msg .d.out { color: #577926; }
+        .msg .k { flex: 0 0 48px; font-weight: 600; }
+        .msg .p { flex: 1; overflow: hidden; text-overflow: ellipsis; color: #51526a; }
+        .msg .ms { flex: 0 0 auto; color: #9a9bab; }
+        .msg .ms.slow { color: #b3261e; font-weight: 600; }
+        #messages .hint { margin: 0; }
     </style>
 </head>
 <body>
@@ -83,6 +100,13 @@
         <legend>Estado</legend>
         <div id="status-body">
             <p class="hint" style="margin:0">leyendo…</p>
+        </div>
+    </fieldset>
+
+    <fieldset id="messages">
+        <legend>&Uacute;ltimos mensajes</legend>
+        <div id="messages-body">
+            <p class="hint">sin mensajes todav&iacute;a</p>
         </div>
     </fieldset>
 
@@ -416,9 +440,50 @@
             statusBody.innerHTML = rows.join('');
         }
 
+        const messagesBody = document.getElementById('messages-body');
+
+        // The protocol's own budgets. Past these the machine times out: it
+        // paints a red box on its screen for an enq, and rejects the box
+        // outright for a lab1.
+        const BUDGET_MS = { enq: 500, lab1: 1000, lab2: 1000, lab3: 1000, inv: 1000 };
+
+        // The payload is whatever the machine sent; it reaches this window as
+        // text and must not reach it as markup.
+        function escapar(texto) {
+            const d = document.createElement('div');
+            d.textContent = String(texto ?? '');
+
+            return d.innerHTML;
+        }
+
+        function renderMessages(messages) {
+            if (!messages || messages.length === 0) {
+                messagesBody.innerHTML = '<p class="hint">sin mensajes todavía</p>';
+
+                return;
+            }
+
+            messagesBody.innerHTML = messages.map((m) => {
+                const hora = new Date(m.at).toLocaleTimeString('es-ES', { hour12: false });
+                const budget = BUDGET_MS[m.type];
+                const slow = budget && m.ms !== null && m.ms > budget;
+                const ms = m.ms === null ? '' : `${m.ms} ms`;
+
+                return `<div class="msg">
+                    <span class="t">${hora}</span>
+                    <span class="d ${m.direction}">${m.direction === 'in' ? '←' : '→'}</span>
+                    <span class="k">${escapar(m.type)}</span>
+                    <span class="p">${escapar(m.payload)}</span>
+                    <span class="ms${slow ? ' slow' : ''}">${ms}</span>
+                </div>`;
+            }).join('');
+        }
+
         async function refreshStatus() {
             try {
-                renderStatus(await api.getCmcStatus());
+                const state = await api.getCmcStatus();
+                renderStatus(state);
+                renderMessages(state.machine && state.machine.messages);
             } catch (error) {
                 statusBody.innerHTML = line('Estado', 'down', 'no se pudo leer', error.message, true);
             }

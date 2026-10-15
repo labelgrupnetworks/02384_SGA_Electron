@@ -4,6 +4,7 @@ const {
     buildLabelReply, buildHeartbeatReply, MESSAGE_TYPES, ENCODING,
 } = require('./protocol');
 const { sendZpl } = require('./labeler-client');
+const { createMessageLog } = require('./message-log');
 
 const DEFAULT_RECONNECT_MS = 5000;
 // Bounds the TCP handshake itself. Without this, a blackholed SYN (a firewall
@@ -102,6 +103,8 @@ function createMachineClient({
     };
 
     const write = (payload) => {
+        messageLog.sent(payload);
+
         if (socket && !socket.destroyed) {
             socket.write(frame(payload));
             return;
@@ -142,6 +145,10 @@ function createMachineClient({
      * until a box reaches it.
      */
     let lastLabel = null;
+
+    // Kept here rather than in main.js so it sees every frame at the one place
+    // they all pass through, in both directions.
+    const messageLog = createMessageLog();
     const noteLabel = (barcode, target, ok, error) => {
         lastLabel = { at: nowIso(), barcode, target, ok, error };
     };
@@ -423,7 +430,10 @@ function createMachineClient({
                     // recovered without ever going through 'close') must not
                     // keep haunting state() forever.
                     lastError = null;
-                    for (const payload of read(chunk)) handlePayload(payload);
+                    for (const payload of read(chunk)) {
+                        messageLog.received(payload);
+                        handlePayload(payload);
+                    }
                 });
                 next.on('error', (error) => {
                     // Guard against a listener left over from a socket that
@@ -493,6 +503,7 @@ function createMachineClient({
                 last_error: lastError,
                 last_enq_at: lastEnqAt,
                 last_label: lastLabel,
+                messages: messageLog.entries(),
             };
         },
 
