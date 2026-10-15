@@ -80,7 +80,8 @@
         .msg .d.in { color: #2f6ea8; }
         .msg .d.out { color: #577926; }
         .msg .k { flex: 0 0 48px; font-weight: 600; }
-        .msg .p { flex: 1; overflow: hidden; text-overflow: ellipsis; color: #51526a; }
+        .msg .p { flex: 1; overflow: hidden; text-overflow: ellipsis; color: #25273d;
+                  font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; }
         .msg .ms { flex: 0 0 auto; color: #9a9bab; }
         .msg .ms.slow { color: #b3261e; font-weight: 600; }
         #messages .hint { margin: 0; }
@@ -499,11 +500,13 @@
                 const slow = budget && m.ms !== null && m.ms > budget;
                 const ms = m.ms === null ? '' : `${m.ms} ms`;
 
-                return `<div class="msg">
+                // The raw frame moves to the tooltip: exact when needed,
+                // out of the way while reading.
+                return `<div class="msg" title="${escapar(m.payload)}">
                     <span class="t">${hora}</span>
                     <span class="d ${m.direction}">${m.direction === 'in' ? '←' : '→'}</span>
                     <span class="k">${escapar(m.type)}</span>
-                    <span class="p">${escapar(m.payload)}</span>
+                    <span class="p">${escapar(m.what || m.payload)}</span>
                     <span class="ms${slow ? ' slow' : ''}">${ms}</span>
                 </div>`;
             }).join('');

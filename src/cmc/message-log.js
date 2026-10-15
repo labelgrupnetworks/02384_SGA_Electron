@@ -11,6 +11,7 @@
  */
 
 const { parseMessage } = require('./protocol');
+const { describeMessage } = require('./describe-message');
 
 const DEFAULT_LIMIT = 20;
 const MAX_PAYLOAD_CHARS = 120;
@@ -64,6 +65,7 @@ function createMessageLog({ limit = DEFAULT_LIMIT } = {}) {
                 at: new Date(now).toISOString(),
                 direction: 'in',
                 type: typeOf(payload),
+                what: describeMessage(payload),
                 payload: shorten(payload),
                 ms: null,
             });
@@ -75,6 +77,7 @@ function createMessageLog({ limit = DEFAULT_LIMIT } = {}) {
                 at: new Date(now).toISOString(),
                 direction: 'out',
                 type: typeOf(payload),
+                what: describeMessage(payload),
                 payload: shorten(payload),
                 // Only when it answers something. A heartbeat reply sent on our
                 // own initiative would otherwise carry the age of whatever
