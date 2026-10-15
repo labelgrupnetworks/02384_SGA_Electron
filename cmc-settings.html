@@ -84,6 +84,20 @@
         .msg .ms { flex: 0 0 auto; color: #9a9bab; }
         .msg .ms.slow { color: #b3261e; font-weight: 600; }
         #messages .hint { margin: 0; }
+
+        /* Order check */
+        #orders textarea {
+            width: 100%; box-sizing: border-box; font-size: 13px; min-height: 58px;
+            font-family: ui-monospace, Consolas, monospace; resize: vertical;
+            border: 1px solid #d8d9e0; border-radius: 8px; padding: 8px 10px;
+        }
+        .order {
+            display: flex; gap: 10px; align-items: baseline;
+            font-size: 13px; padding: 4px 0; border-bottom: 1px solid #ecedf2;
+        }
+        .order:last-child { border-bottom: none; }
+        .order .code { flex: 0 0 150px; font-family: ui-monospace, Consolas, monospace; }
+        .order .why { flex: 1; }
     </style>
 </head>
 <body>
@@ -101,6 +115,22 @@
         <div id="status-body">
             <p class="hint" style="margin:0">leyendo…</p>
         </div>
+    </fieldset>
+
+    <fieldset id="orders">
+        <legend>Comprobar pedidos y cargar el lote</legend>
+        <p class="hint">
+            Pregunta a Verentia si cada caja puede etiquetarse, y carga como lote
+            las que s&iacute;. Sin lote cargado, la m&aacute;quina recibe
+            &laquo;no la conozco&raquo; para cada caja y la deja pasar sin etiquetar.
+            Uno por l&iacute;nea, o separados por comas.
+        </p>
+        <textarea id="order-numbers" placeholder="2620-2595156"></textarea>
+        <div class="row" style="margin-top:8px">
+            <div class="probe"><button type="button" id="check-orders" class="primary">Comprobar y cargar</button></div>
+            <div class="how"><div class="probe-result" id="orders-result"></div></div>
+        </div>
+        <div id="orders-body"></div>
     </fieldset>
 
     <fieldset id="messages">
@@ -478,6 +508,72 @@
                 </div>`;
             }).join('');
         }
+
+        // Why Verentia turned a box down. These are its own words; the panel
+        // only translates them, because `no_label` on screen tells an operator
+        // nothing while "no tiene etiqueta de expedición" tells them who to ask.
+        const MOTIVOS = {
+            order_not_found: 'el pedido no existe en ese Verentia',
+            no_label: 'existe, pero no tiene etiqueta de expedición',
+            file_missing: 'tiene etiqueta registrada, pero falta el fichero en disco',
+        };
+
+        const ordersBody = document.getElementById('orders-body');
+        const ordersResult = document.getElementById('orders-result');
+
+        async function checkOrders(button) {
+            const raw = document.getElementById('order-numbers').value;
+            const numbers = raw.split(/[\s,;]+/).map((n) => n.trim()).filter(Boolean);
+
+            button.disabled = true;
+            ordersResult.className = 'probe-result';
+            ordersResult.textContent = 'preguntando a Verentia…';
+            ordersBody.innerHTML = '';
+
+            try {
+                const r = await api.checkOrders(numbers);
+
+                if (!r.ok) {
+                    const porque = {
+                        no_endpoint: 'configura antes la URL de Verentia, abajo',
+                        no_orders: 'escribe al menos un número de pedido',
+                        http: `Verentia respondió ${r.status}` + (r.status === 401 ? ' — el token no es el de ese entorno' : ''),
+                        unreachable: `no se pudo llegar: ${r.message ?? ''}`,
+                    }[r.reason] ?? r.reason;
+
+                    ordersResult.className = 'probe-result bad';
+                    ordersResult.textContent = '✗ ' + porque;
+
+                    return;
+                }
+
+                ordersResult.className = r.loaded > 0 ? 'probe-result ok' : 'probe-result bad';
+                ordersResult.textContent = r.loaded > 0
+                    ? `✓ lote cargado con ${r.loaded} caja(s)`
+                    : '✗ ninguna caja utilizable: no se ha cargado ningún lote';
+
+                ordersBody.innerHTML = [
+                    ...r.usable.map((u) => `<div class="order">
+                        <span class="dot up"></span>
+                        <span class="code">${escapar(u.barcode)}</span>
+                        <span class="why ok">entra en el lote · ${u.labels} etiqueta(s)</span>
+                    </div>`),
+                    ...r.unusable.map((u) => `<div class="order">
+                        <span class="dot down"></span>
+                        <span class="code">${escapar(u.barcode)}</span>
+                        <span class="why bad">${escapar(MOTIVOS[u.reason] ?? u.reason)}</span>
+                    </div>`),
+                ].join('');
+            } catch (error) {
+                ordersResult.className = 'probe-result bad';
+                ordersResult.textContent = '✗ no se pudo comprobar';
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        document.getElementById('check-orders')
+            .addEventListener('click', (event) => checkOrders(event.target));
 
         async function refreshStatus() {
             try {

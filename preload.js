@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   probeCmcTarget: (target) => ipcRenderer.invoke('probe-cmc-target', target),
   getCmcStatus: () => ipcRenderer.invoke('get-cmc-status'),
   printTestLabel: (target) => ipcRenderer.invoke('print-test-label', target),
+  checkOrders: (orders) => ipcRenderer.invoke('check-orders', orders),
 });
 
 window.addEventListener('DOMContentLoaded', () => {

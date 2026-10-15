@@ -17,6 +17,7 @@ const { createMachineClient } = require("./src/cmc/machine-client");
 const { createReportQueue } = require("./src/cmc/report-queue");
 const { buildTestLabel } = require("./src/cmc/test-label");
 const { sendZpl } = require("./src/cmc/labeler-client");
+const { manifestUrlFrom } = require("./src/cmc/manifest-url");
 const { createStore } = require("./src/config/store");
 const { resolveLocalIp } = require("./src/network/resolve");
 const { listCandidateInterfaces } = require("./src/network/interfaces");
@@ -402,6 +403,76 @@ ipcMain.handle("get-cmc-status", () => {
  * after 3 s" each point somewhere different - and if the printer turns out to
  * speak LPD on 515 rather than raw, the shape of the failure is the evidence.
  */
+/**
+ * Asks Verentia about a list of orders, and loads what comes back as the batch.
+ *
+ * Until now the only way to see why a box would not be labelled was to call the
+ * API by hand: Verentia answers `no_label`, `order_not_found` or `file_missing`
+ * per order, and none of it reached anyone standing at the machine. Loading the
+ * batch had the same problem - it was a curl command, so in practice no batch
+ * was ever loaded and every box came back `unknown`, which looks like a broken
+ * bridge rather than a missing step.
+ *
+ * Both are the same request, so they are one button.
+ */
+ipcMain.handle("check-orders", async (event, orderNumbers) => {
+    const cmc = getConfigStore().read().cmc ?? {};
+    const url = manifestUrlFrom(cmc.verentia?.endpoint);
+
+    if (!url) {
+        return { ok: false, reason: "no_endpoint" };
+    }
+
+    const numbers = (Array.isArray(orderNumbers) ? orderNumbers : [])
+        .map((n) => String(n ?? "").trim())
+        .filter((n) => n !== "");
+
+    if (numbers.length === 0) {
+        return { ok: false, reason: "no_orders" };
+    }
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+                "X-CMC-Station-Token": cmc.verentia?.station_token ?? "",
+            },
+            body: JSON.stringify({ order_numbers: numbers }),
+            signal: AbortSignal.timeout(15000),
+        });
+
+        if (!response.ok) {
+            return { ok: false, reason: "http", status: response.status };
+        }
+
+        const manifest = await response.json();
+        const entries = manifest.entries ?? [];
+
+        // Loaded here rather than left for a second button: a batch that was
+        // looked at and not loaded is the state that produces `unknown`.
+        if (cmcCache && entries.length > 0) {
+            cmcCache.replace(manifest);
+        }
+
+        return {
+            ok: true,
+            url,
+            loaded: entries.length,
+            usable: entries.map((entry) => ({
+                barcode: entry.barcode,
+                labels: (entry.label_payloads ?? []).length,
+            })),
+            unusable: manifest.unavailable ?? [],
+        };
+    } catch (error) {
+        logger.warn(`⚠️ [cmc] no se pudo consultar ${url}: ${error.message}`);
+
+        return { ok: false, reason: "unreachable", message: error.message };
+    }
+});
+
 ipcMain.handle("print-test-label", async (event, target) => {
     const host = String(target?.host ?? "").trim();
     const port = Number(target?.port);
