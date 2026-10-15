@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveCmcConfig: (config) => ipcRenderer.invoke('save-cmc-config', config),
   probeCmcTarget: (target) => ipcRenderer.invoke('probe-cmc-target', target),
   getCmcStatus: () => ipcRenderer.invoke('get-cmc-status'),
+  printTestLabel: (target) => ipcRenderer.invoke('print-test-label', target),
 });
 
 window.addEventListener('DOMContentLoaded', () => {

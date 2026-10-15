@@ -113,6 +113,9 @@
         <p class="hint">
             A donde se env&iacute;a el ZPL. El orden importa: la primera recibe el LAB1, la
             segunda el LAB2 y la tercera el LAB3. Deja en blanco las que no existan.
+            <br />&laquo;Probar&raquo; solo comprueba que algo contesta en esa direcci&oacute;n;
+            &laquo;Imprimir prueba&raquo; manda una etiqueta de verdad, que es lo &uacute;nico
+            que demuestra que sale papel.
         </p>
         <div id="labelers"></div>
     </fieldset>
@@ -171,8 +174,12 @@
                         <div class="probe">
                             <button type="button" data-probe="labeler${index}">Probar</button>
                         </div>
+                        <div class="probe">
+                            <button type="button" data-print="${index}">Imprimir prueba</button>
+                        </div>
                     </div>
                     <div class="probe-result" id="probe-labeler${index}"></div>
+                    <div class="probe-result" id="print-labeler${index}"></div>
                 `;
 
                 labelersBox.appendChild(row);
@@ -226,9 +233,53 @@
             }
         }
 
+        // Sends a real label. Reports what came back in the operator's terms:
+        // standing at a printer, "no imprime" is useless and "rechaza la
+        // conexión" tells you where to go next.
+        async function printTest(index, button) {
+            const result = document.getElementById('print-labeler' + index);
+
+            button.disabled = true;
+            result.className = 'probe-result';
+            result.textContent = 'enviando…';
+
+            try {
+                const outcome = await api.printTestLabel(targetFor('labeler' + index));
+
+                if (outcome.ok) {
+                    result.className = 'probe-result ok';
+                    result.textContent = `✓ enviada (${outcome.bytes} bytes en ${outcome.ms} ms) · mira si ha salido papel`;
+                } else if (outcome.reason === 'invalid') {
+                    result.className = 'probe-result bad';
+                    result.textContent = '✗ falta la IP o el puerto';
+                } else {
+                    const porque = {
+                        connect: 'no se pudo abrir la conexión',
+                        peripheral: 'rechazó el envío',
+                        timeout: 'conectó pero no aceptó la etiqueta a tiempo',
+                    }[outcome.reason] ?? outcome.reason;
+
+                    result.className = 'probe-result bad';
+                    result.textContent = `✗ ${porque} (${outcome.ms} ms)`;
+                }
+            } catch (error) {
+                result.className = 'probe-result bad';
+                result.textContent = '✗ no se pudo enviar';
+            } finally {
+                button.disabled = false;
+            }
+        }
+
         document.addEventListener('click', (event) => {
-            const button = event.target.closest('[data-probe]');
-            if (button) probe(button.dataset.probe, button);
+            const probeButton = event.target.closest('[data-probe]');
+            if (probeButton) {
+                probe(probeButton.dataset.probe, probeButton);
+
+                return;
+            }
+
+            const printButton = event.target.closest('[data-print]');
+            if (printButton) printTest(printButton.dataset.print, printButton);
         });
 
         document.getElementById('cancel').addEventListener('click', () => window.close());

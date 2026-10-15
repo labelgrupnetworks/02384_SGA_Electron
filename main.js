@@ -15,6 +15,8 @@ const { registerCmcRoutes } = require("./src/server/cmc-routes");
 const { createManifestCache } = require("./src/cmc/manifest-cache");
 const { createMachineClient } = require("./src/cmc/machine-client");
 const { createReportQueue } = require("./src/cmc/report-queue");
+const { buildTestLabel } = require("./src/cmc/test-label");
+const { sendZpl } = require("./src/cmc/labeler-client");
 const { createStore } = require("./src/config/store");
 const { resolveLocalIp } = require("./src/network/resolve");
 const { listCandidateInterfaces } = require("./src/network/interfaces");
@@ -380,6 +382,49 @@ ipcMain.handle("get-cmc-status", () => {
                 : { pending: 0, lastError: null, lastSentAt: null }),
         },
     };
+});
+
+/**
+ * Sends a test label to one address and reports precisely what happened.
+ *
+ * A probe only proves something accepted a TCP connection. This proves the
+ * whole path, which on the day of an installation is the only question that
+ * matters: does paper come out of that machine.
+ *
+ * The outcome is deliberately detailed. "No imprime" is useless while standing
+ * at a printer; "refused the connection", "accepted 412 bytes" and "timed out
+ * after 3 s" each point somewhere different - and if the printer turns out to
+ * speak LPD on 515 rather than raw, the shape of the failure is the evidence.
+ */
+ipcMain.handle("print-test-label", async (event, target) => {
+    const host = String(target?.host ?? "").trim();
+    const port = Number(target?.port);
+
+    if (host === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
+        return { ok: false, reason: "invalid" };
+    }
+
+    const content = buildTestLabel({ target: `${host}:${port}` });
+    const startedAt = Date.now();
+
+    try {
+        await sendZpl({ host, port, content });
+        logger.info(`🖨️ [cmc] etiqueta de prueba enviada a ${host}:${port}`);
+
+        return { ok: true, bytes: content.length, ms: Date.now() - startedAt };
+    } catch (error) {
+        logger.warn(`⚠️ [cmc] la etiqueta de prueba no llegó a ${host}:${port}: ${error.message}`);
+
+        return {
+            ok: false,
+            // CmcError carries `code`: connect, timeout or peripheral. It is
+            // the difference between "nothing there", "it listens but will not
+            // talk" and "it refused the payload".
+            reason: error.code ?? "error",
+            message: error.message,
+            ms: Date.now() - startedAt,
+        };
+    }
 });
 
 ipcMain.handle("probe-cmc-target", (event, target) => {
