@@ -161,7 +161,11 @@ function createReportQueue({
         },
 
         state() {
-            return { pending: pending.length, lastError, lastSentAt };
+            // `endpoint` is the one IN USE, which need not be the one on disk:
+            // settings are read at boot. Reporting the saved one let the panel
+            // show a freshly typed URL as though the station were already
+            // posting there.
+            return { pending: pending.length, lastError, lastSentAt, endpoint };
         },
 
         async flush() {

@@ -397,13 +397,20 @@
                         : null,
                     Boolean(label && !label.ok),
                 ),
-                line(
-                    'Verentia',
-                    v.lastError ? 'down' : (v.pending > 0 ? 'idle' : 'up'),
-                    v.pending > 0 ? `${v.pending} informes en cola` : 'sin cola',
-                    v.lastError ?? (v.lastSentAt ? `último envío ${ago(v.lastSentAt)}` : 'nada enviado aún'),
-                    Boolean(v.lastError),
-                ),
+                v.savedEndpoint
+                    ? line(
+                        'Verentia',
+                        'idle',
+                        'URL guardada · sin aplicar',
+                        `Reinicia la aplicación. Sigue reportando a ${v.endpoint || '(ninguna)'}.`,
+                    )
+                    : line(
+                        'Verentia',
+                        v.lastError ? 'down' : (v.pending > 0 ? 'idle' : 'up'),
+                        v.pending > 0 ? `${v.pending} informes en cola` : 'sin cola',
+                        v.lastError ?? (v.lastSentAt ? `último envío ${ago(v.lastSentAt)}` : 'nada enviado aún'),
+                        Boolean(v.lastError),
+                    ),
             ];
 
             statusBody.innerHTML = rows.join('');

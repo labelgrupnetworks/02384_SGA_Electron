@@ -375,12 +375,18 @@ ipcMain.handle("get-cmc-status", () => {
             savedAddress: machine.address === saved ? null : saved,
         },
         manifest: cmcCache ? cmcCache.state() : null,
-        verentia: {
-            endpoint: cmc.verentia?.endpoint ?? "",
-            ...(cmcReportQueue
+        verentia: (() => {
+            const savedEndpoint = cmc.verentia?.endpoint ?? "";
+            const queue = cmcReportQueue
                 ? cmcReportQueue.state()
-                : { pending: 0, lastError: null, lastSentAt: null }),
-        },
+                : { pending: 0, lastError: null, lastSentAt: null, endpoint: savedEndpoint };
+
+            return {
+                ...queue,
+                // Same trap as the machine address: saved is not applied.
+                savedEndpoint: queue.endpoint === savedEndpoint ? null : savedEndpoint,
+            };
+        })(),
     };
 });
 

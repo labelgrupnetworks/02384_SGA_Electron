@@ -24,7 +24,22 @@ function queueWith(fetchImpl) {
 test('a queue that has never sent anything reports no error and no delivery', () => {
     const queue = queueWith(async () => ({ ok: true, status: 200 }));
 
-    assert.deepEqual(queue.state(), { pending: 0, lastError: null, lastSentAt: null });
+    assert.deepEqual(queue.state(), {
+        pending: 0,
+        lastError: null,
+        lastSentAt: null,
+        endpoint: 'http://verentia.test/api/v1/cmc/results',
+    });
+});
+
+test('it reports the endpoint it is actually posting to', () => {
+    // Not the one on disk. Settings are read at boot, so an endpoint saved from
+    // the dialog does not take effect until a restart - and the status panel
+    // was showing the saved one beside the running queue's state, which reads
+    // as "it is already reporting there" when it is still reporting elsewhere.
+    const queue = queueWith(async () => ({ ok: true, status: 200 }));
+
+    assert.equal(queue.state().endpoint, 'http://verentia.test/api/v1/cmc/results');
 });
 
 test('a successful flush records when results last reached Verentia', async () => {
