@@ -18,6 +18,7 @@ const { createReportQueue } = require("./src/cmc/report-queue");
 const { buildTestLabel } = require("./src/cmc/test-label");
 const { sendZpl } = require("./src/cmc/labeler-client");
 const { manifestUrlFrom } = require("./src/cmc/manifest-url");
+const { isTargetAlreadyLinked } = require("./src/cmc/already-connected");
 const { createStore } = require("./src/config/store");
 const { resolveLocalIp } = require("./src/network/resolve");
 const { listCandidateInterfaces } = require("./src/network/interfaces");
@@ -510,6 +511,13 @@ ipcMain.handle("probe-cmc-target", (event, target) => {
 
     if (host === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
         return Promise.resolve({ reachable: false, reason: "invalid" });
+    }
+
+    // Answered without opening anything. The driver's own link is the proof,
+    // and a second socket to a machine that accepts one client is refused -
+    // which looked like a dead machine while the panel showed it connected.
+    if (isTargetAlreadyLinked(cmcMachine ? cmcMachine.state() : null, { host, port })) {
+        return Promise.resolve({ reachable: true, reason: "already_connected" });
     }
 
     return new Promise((resolve) => {

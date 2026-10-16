@@ -273,7 +273,9 @@
 
                 if (outcome.reachable) {
                     result.className = 'probe-result ok';
-                    result.textContent = '✓ responde';
+                    result.textContent = outcome.reason === 'already_connected'
+                        ? '✓ ya conectada · el puente la tiene abierta'
+                        : '✓ responde';
                 } else {
                     result.className = 'probe-result bad';
                     result.textContent = outcome.reason === 'invalid'

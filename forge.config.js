@@ -21,9 +21,19 @@ module.exports = {
     //
     // Nothing the app needs at runtime is hidden: main.js, preload.js,
     // splash.html and icon.png are all at the root unprefixed.
+    // `out` and anything beside it starting with "out": forge's own output, plus
+    // the hand-made copies that accumulate next to it (out_bkp, out_good). Those
+    // are previous builds, and without this they are packaged INTO the new one -
+    // an installer containing two copies of itself. It happened: the asar reached
+    // 2.2 GB, the nupkg 1.8 GB, and Squirrel silently produced a 0.2 MB Setup.exe
+    // instead of the self-contained installer, because it could not embed that.
+    //
+    // labels-received/ is where the stand-in labeller writes what it receives.
     ignore: [
       /^\/\.[^/]+($|\/)/,
-      /^\/(docs|test|tests|publish\.js)($|\/)/
+      /^\/(docs|test|tests|publish\.js)($|\/)/,
+      /^\/out[^/]*($|\/)/,
+      /^\/labels-received($|\/)/
     ]
   },
   rebuildConfig: {},
